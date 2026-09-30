@@ -1,0 +1,209 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: Impact, "Haettenschweiler", "Arial Narrow Bold", "Oswald", "Roboto Condensed", sans-serif;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface-2);
+  --color-panel: var(--panel);
+  --color-panel-strong: var(--panel-strong);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--ink-muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-heading: var(--heading);
+  --color-highlight: var(--highlight);
+  --color-highlight-ink: var(--highlight-ink);
+  --color-mint: var(--mint);
+  --color-mint-soft: var(--mint-soft);
+  --color-gold-soft: var(--gold-soft);
+  --color-danger: var(--danger);
+  --color-good: var(--good);
+  --color-nope: var(--nope);
+}
+
+/* ---------- dark theme (default) ---------- */
+:root {
+  color-scheme: dark;
+  --page: #211d30;
+  --page-gradient:
+    radial-gradient(ellipse at 50% -12%, rgba(226, 93, 67, 0.3), transparent 46%),
+    radial-gradient(ellipse at 88% 88%, rgba(89, 122, 107, 0.18), transparent 38%),
+    linear-gradient(180deg, #312a40 0%, #211d30 58%, #171522 100%);
+  --hero-gradient:
+    radial-gradient(ellipse at 88% 12%, rgba(240, 197, 101, 0.16), transparent 36%),
+    radial-gradient(ellipse at 2% 84%, rgba(127, 183, 154, 0.14), transparent 38%),
+    linear-gradient(180deg, #2c2539 0%, #241f33 100%);
+  --art-gradient: linear-gradient(135deg, #2f3b3a 0%, #35304a 48%, #4a3630 100%);
+  --art-dot: rgba(255, 255, 255, 0.35);
+  --surface: #2c2539;
+  --surface-2: #262031;
+  --panel: rgba(0, 0, 0, 0.3);
+  --panel-strong: rgba(0, 0, 0, 0.42);
+  --line: rgba(255, 255, 255, 0.12);
+  --ink: #f6f1ea;
+  --ink-muted: rgba(246, 241, 234, 0.7);
+  --accent: #ef6a52;
+  --accent-soft: rgba(239, 106, 82, 0.16);
+  --heading: #f0c565;
+  --highlight: #f0c565;
+  --highlight-ink: #2b2434;
+  --mint: #86bd9f;
+  --mint-soft: rgba(134, 189, 159, 0.16);
+  --gold-soft: rgba(240, 197, 101, 0.16);
+  --danger: #ffa588;
+  --good: #9ed9b6;
+  --nope: #ff9086;
+}
+
+/* ---------- light theme ---------- */
+.theme-light {
+  color-scheme: light;
+  --page: #fff9ef;
+  --page-gradient:
+    radial-gradient(ellipse at 50% -10%, rgba(255, 213, 133, 0.32), transparent 42%),
+    linear-gradient(180deg, #fff9ef 0%, #f7f0e2 100%);
+  --hero-gradient:
+    radial-gradient(ellipse at 91% 18%, rgba(255, 213, 133, 0.45), transparent 31%),
+    radial-gradient(ellipse at 0% 82%, rgba(174, 214, 194, 0.28), transparent 35%),
+    #fff9ef;
+  --art-gradient: linear-gradient(135deg, #dceee2 0%, #eaf2df 48%, #ffe4bd 100%);
+  --art-dot: rgba(255, 255, 255, 0.95);
+  --surface: #ffffff;
+  --surface-2: #f4eddf;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-strong: rgba(255, 255, 255, 0.9);
+  --line: #e6dccb;
+  --ink: #302b3f;
+  --ink-muted: #6d6876;
+  --accent: #e45b47;
+  --accent-soft: #fff0ec;
+  --heading: #ad4c42;
+  --highlight: #e45b47;
+  --highlight-ink: #ffffff;
+  --mint: #4c8467;
+  --mint-soft: #e5f0e5;
+  --gold-soft: #fff0d2;
+  --danger: #c2502f;
+  --good: #3d7a58;
+  --nope: #c03a34;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  overflow-x: clip;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page-gradient);
+  background-attachment: fixed;
+  color: var(--ink);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.015em;
+  text-transform: uppercase;
+}
+
+.landing-page {
+  width: 100%;
+  overflow-x: clip;
+  color: var(--ink);
+}
+
+.landing-hero {
+  background: var(--hero-gradient);
+}
+
+.landing-art {
+  background:
+    radial-gradient(circle at 18% 25%, var(--art-dot) 0 2px, transparent 3px),
+    radial-gradient(circle at 78% 72%, var(--art-dot) 0 3px, transparent 4px),
+    var(--art-gradient);
+  background-size: 34px 34px, 42px 42px, auto;
+}
+
+.game-surface {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow-x: clip;
+  color: var(--ink);
+  background: var(--page-gradient);
+  background-attachment: fixed;
+}
+
+.card-back {
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.08) 0 6px, transparent 6px 12px),
+    linear-gradient(160deg, #e9624b, #ad3c43);
+}
+
+@keyframes boom {
+  0% { transform: scale(0.2) rotate(-10deg); opacity: 0; }
+  30% { transform: scale(1.3) rotate(5deg); opacity: 1; }
+  60% { transform: scale(1) rotate(-3deg); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+.animate-boom { animation: boom 1.6s ease-out forwards; }
+
+@keyframes shake {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-6px, 3px); }
+  40% { transform: translate(6px, -3px); }
+  60% { transform: translate(-4px, -2px); }
+  80% { transform: translate(4px, 2px); }
+}
+.animate-shake { animation: shake 0.5s ease-in-out 2; }
+
+@keyframes pop-in {
+  0% { transform: scale(0.96) translateY(8px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.animate-pop { animation: pop-in 0.25s ease-out; }
+
+@keyframes flicker {
+  0%, 100% { transform: scaleY(1) translateY(0); opacity: 0.9; }
+  50% { transform: scaleY(1.15) translateY(-4px); opacity: 1; }
+}
+.animate-flicker { animation: flicker 1.2s ease-in-out infinite; transform-origin: bottom; }
+
+/* Smooth theme transitions */
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition: background-color 0.35s ease, color 0.35s ease, border-color 0.35s ease,
+    box-shadow 0.35s ease, background 0.35s ease !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar { height: 6px; width: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink) 25%, transparent); border-radius: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
