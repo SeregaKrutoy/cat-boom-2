@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { botStep } from "./bot";
-import { actor, applyAction, createState, GameError, log, startGame, tick } from "./engine";
+import { actor, applyAction, createState, GameError, log, registerRematchVote, startGame, tick } from "./engine";
 import type { Action, GameState, Tournament, TournamentTable } from "./types";
 
 /** Pause between rounds before the next one starts automatically. */
@@ -42,8 +43,8 @@ export function roundRobinRounds(n: number): [number, number][][] {
 function makeTable(s: GameState, id: number, a: number, b: number, now: number): TournamentTable {
   const pa = s.players[a];
   const pb = s.players[b];
-  const g = createState(s.code, "friends", { id: pa.id, name: pa.name }, 2);
-  g.players.push({ id: pb.id, name: pb.name, isBot: false, hand: [], exploded: false });
+  const g = createState(s.code, "friends", { id: pa.id, name: pa.name, avatar: pa.avatar }, 2);
+  g.players.push({ id: pb.id, name: pb.name, avatar: pb.avatar, isBot: false, hand: [], exploded: false });
   g.score = [0, 0];
   g.log = [];
   startGame(g, now);
@@ -78,7 +79,7 @@ export function startTournament(s: GameState, now: number) {
     bye: null,
     phase: "round",
     nextRoundAt: null,
-    nextTableId: 1,
+    nextTableId: s.tournament?.nextTableId ?? 1,
     wins: Array(n).fill(0),
     played: Array(n).fill(0),
     away: Array(n).fill(false),
@@ -86,6 +87,8 @@ export function startTournament(s: GameState, now: number) {
     tie: [],
   };
   s.tournament = t;
+  s.matchId = randomUUID();
+  s.rematchVotes = [];
   s.status = "playing";
   s.winner = null;
   s.games += 1;
@@ -201,7 +204,8 @@ function tournamentAction(s: GameState, pi: number, a: Action, now: number) {
   if (!t || s.status === "waiting") fail("Турнир ещё не начался");
   if (a.type === "rematch") {
     if (t.phase !== "finished") fail("Турнир ещё идёт");
-    startTournament(s, now);
+    if (registerRematchVote(s, pi)) startTournament(s, now);
+    else s.seq += 1;
     return;
   }
   if (t.phase === "finished") fail("Турнир окончен");

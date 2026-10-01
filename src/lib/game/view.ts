@@ -1,5 +1,21 @@
-import { responder } from "./engine";
-import type { GameState, GameView, TournamentView } from "./types";
+import { reactionPlayers, responder } from "./engine";
+import { BOT_AVATAR, DEFAULT_AVATAR } from "../profile";
+import type { GameState, GameView, RematchInfo, TournamentView } from "./types";
+
+const avatarOf = (p: { avatar?: string; isBot: boolean }) => p.avatar ?? (p.isBot ? BOT_AVATAR : DEFAULT_AVATAR);
+
+/** Who has pressed «Реванш» (not shown in bot games, where a rematch is instant). */
+function rematchInfo(s: GameState, me: number): RematchInfo | null {
+  if (s.status !== "finished" || s.players.some((p) => p.isBot)) return null;
+  const votes = s.rematchVotes ?? [];
+  const info = (i: number) => ({ name: s.players[i].name, avatar: avatarOf(s.players[i]) });
+  const all = s.players.map((_, i) => i);
+  return {
+    ready: all.filter((i) => votes.includes(i)).map(info),
+    waiting: all.filter((i) => !votes.includes(i)).map(info),
+    iVoted: me >= 0 && votes.includes(me),
+  };
+}
 
 /** View of a single game (a normal room, or one tournament table) for one player. */
 function plainView(s: GameState, token: string, now: number): GameView {
@@ -7,6 +23,7 @@ function plainView(s: GameState, token: string, now: number): GameView {
   const p = s.pending;
   return {
     code: s.code,
+    matchId: s.matchId ?? `legacy:${s.code}:${s.games}`,
     mode: s.mode,
     maxPlayers: s.maxPlayers,
     tournament: null,
@@ -17,6 +34,7 @@ function plainView(s: GameState, token: string, now: number): GameView {
     isHost: me >= 0 && s.players[me].id === s.hostId,
     players: s.players.map((pl) => ({
       name: pl.name,
+      avatar: avatarOf(pl),
       isBot: pl.isBot,
       handCount: pl.hand.length,
       exploded: pl.exploded,
@@ -39,6 +57,8 @@ function plainView(s: GameState, token: string, now: number): GameView {
           lastBy: p.lastBy,
           msLeft: Math.max(0, p.deadline - now),
           responder: responder(s),
+          responders: reactionPlayers(s),
+          passed: p.passed ?? [],
         }
       : null,
     favor: s.favor,
@@ -47,6 +67,7 @@ function plainView(s: GameState, token: string, now: number): GameView {
     log: s.log.filter((l) => l.for === undefined || l.for === me).slice(-50),
     winner: s.winner,
     event: s.event,
+    rematch: rematchInfo(s, me),
     seq: s.seq,
     score: s.score,
   };
@@ -67,10 +88,11 @@ function tournamentView(s: GameState, token: string, now: number, watch: number 
   const base = plainView(shown.game, seated ? token : "", now);
 
   const standings = s.players
-    .map((p, i) => ({ idx: i, name: p.name, wins: t.wins[i], played: t.played[i] }))
+    .map((p, i) => ({ idx: i, name: p.name, avatar: avatarOf(p), wins: t.wins[i], played: t.played[i] }))
     .sort((a, b) => b.wins - a.wins || a.played - b.played || a.name.localeCompare(b.name));
 
   const tv: TournamentView = {
+    id: s.matchId ?? `legacy:${s.code}:${s.games}`,
     round: t.round + 1,
     rounds: t.rounds.length,
     phase: t.phase,
@@ -80,6 +102,7 @@ function tournamentView(s: GameState, token: string, now: number, watch: number 
       num: i + 1,
       seats: [tb.a, tb.b],
       names: [s.players[tb.a].name, s.players[tb.b].name],
+      avatars: [avatarOf(s.players[tb.a]), avatarOf(s.players[tb.b])],
       status: tb.game.status === "finished" ? "finished" : "playing",
       winner: tb.winner,
       turn: tb.game.status === "playing" ? (tb.game.players[tb.game.current]?.name ?? null) : null,
@@ -92,6 +115,7 @@ function tournamentView(s: GameState, token: string, now: number, watch: number 
     champion: t.champion,
     tie: t.tie,
     names: s.players.map((p) => p.name),
+    avatars: s.players.map(avatarOf),
     myIdx: ri,
     myTable: mine ? mine.id : null,
   };
@@ -105,6 +129,7 @@ function tournamentView(s: GameState, token: string, now: number, watch: number 
     seq: s.seq, // room-wide counter: grows whenever any table changes, whichever table is shown
     score: [],
     tournament: tv,
+    rematch: t.phase === "finished" ? rematchInfo(s, ri) : null,
     spectator: !seated,
     tableId: shown.id,
   };

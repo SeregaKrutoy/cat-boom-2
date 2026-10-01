@@ -5,9 +5,9 @@ import { THEME_SCRIPT } from "@/components/ThemeToggle";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Взрывные котята — Дуэль онлайн",
-  description: "Играй во «Взрывных котят» (дуэль на 2 игрока) с друзьями по ссылке или против бота.",
-  icons: { icon: "/images/kittens-logo.png", apple: "/images/kittens-logo.png" },
+  title: "Взрывные котята — Онлайн-игра",
+  description: "Играй во «Взрывных котят» с 2–6 друзьями, против бота или в турнире.",
+  icons: { icon: "/exploding-kitten-logo.png", apple: "/exploding-kitten-logo.png" },
 };
 
 export const viewport: Viewport = {

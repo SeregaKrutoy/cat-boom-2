@@ -6,6 +6,7 @@ export interface Card { id: string; type: CardType; }
 
 export interface Player {
   id: string; name: string; isBot: boolean; hand: Card[]; exploded: boolean;
+  avatar?: string; // cat smiley shown next to the name (optional for older saved games)
 }
 
 export type PendingKind = "attack" | "skip" | "favor" | "shuffle" | "future" | "pair" | "triple";
@@ -14,6 +15,7 @@ export interface Pending {
   kind: PendingKind; by: number; cards: Card[];
   named?: CardType; target?: number;
   nopes: number; lastBy: number; deadline: number;
+  passed?: number[]; // responses in the current shared Nope window
 }
 
 export interface LogEntry {
@@ -34,28 +36,31 @@ export interface GameEvent {
 
 /** One table of the current round: an independent 2-player game. */
 export interface TournamentTable {
-  id: number; // unique across the whole tournament
-  a: number; b: number; // room player indexes seated at this table
-  game: GameState; // the actual game being played (players[0] = a, players[1] = b)
-  winner: number | null; // room player index
-  lastSeq: number; lastChange: number; // for auto-play of idle players
+  id: number;
+  a: number; b: number;
+  game: GameState;
+  winner: number | null;
+  lastSeq: number; lastChange: number;
 }
 
 export interface Tournament {
-  rounds: [number, number][][]; // round-robin schedule: pairs per round
-  round: number; // current round index
-  tables: TournamentTable[]; // tables of the current round (kept after the end)
-  bye: number | null; // player resting this round (odd number of players)
+  rounds: [number, number][][];
+  round: number;
+  tables: TournamentTable[];
+  bye: number | null;
   phase: "round" | "between" | "finished";
   nextRoundAt: number | null;
   nextTableId: number;
   wins: number[]; played: number[]; away: boolean[];
   champion: number | null;
-  tie: number[]; // players sharing first place when it is a draw
+  tie: number[];
 }
 
 export interface GameState {
   code: string; mode: Mode; maxPlayers: number;
+  matchId?: string; // new per deal; optional for persisted games from older versions
+  deckVersion?: number;
+  rematchVotes?: number[]; // players (by index) who pressed «Реванш»; everyone must agree
   tournament: Tournament | null;
   status: Status; players: Player[];
   deck: Card[]; discard: Card[];
@@ -77,42 +82,45 @@ export type Action =
   | { type: "rematch" };
 
 export interface PlayerView {
-  name: string; isBot: boolean; handCount: number; exploded: boolean;
+  name: string; avatar: string; isBot: boolean; handCount: number; exploded: boolean;
 }
 
 export interface TableSummary {
-  id: number; num: number; // num = table number within the round (1-based)
-  seats: [number, number]; names: [string, string];
+  id: number; num: number;
+  seats: [number, number]; names: [string, string]; avatars: [string, string];
   status: "playing" | "finished";
-  winner: number | null; // room player index
-  turn: string | null; // name of the player who moves now
+  winner: number | null;
+  turn: string | null;
   mine: boolean;
 }
 
-export interface Standing { idx: number; name: string; wins: number; played: number; }
+export interface Standing { idx: number; name: string; avatar: string; wins: number; played: number; }
 
 export interface TournamentView {
-  round: number; rounds: number; // 1-based
+  id: string;
+  round: number; rounds: number;
   phase: "round" | "between" | "finished";
-  nextRoundIn: number; // ms
+  nextRoundIn: number;
   tables: TableSummary[];
   bye: string | null; byeMe: boolean;
   standings: Standing[]; total: number;
   champion: number | null; tie: number[];
-  names: string[]; myIdx: number;
-  myTable: number | null; // id of my table in the current round
+  names: string[]; avatars: string[]; myIdx: number;
+  myTable: number | null;
 }
 
 export interface GameView {
   code: string; mode: Mode; maxPlayers: number;
+  matchId: string;
+  rematch: RematchInfo | null; // null while playing and in bot games (a rematch is instant there)
   tournament: TournamentView | null;
-  spectator: boolean; // watching a table I am not seated at
-  tableId: number | null; // tournament table shown in this view
+  spectator: boolean;
+  tableId: number | null;
   status: Status; me: number; isHost: boolean;
   players: PlayerView[]; hand: Card[];
   deckCount: number; discardTop: Card | null; discardCount: number;
   current: number; turnsLeft: number; phase: Phase;
-  pending: (Omit<Pending, "deadline"> & { msLeft: number; responder: number }) | null;
+  pending: (Omit<Pending, "deadline"> & { msLeft: number; responder: number; responders: number[] }) | null;
   favor: { giver: number; receiver: number } | null;
   defuse: { player: number } | null;
   peek: Peek | null; log: LogEntry[];
@@ -120,7 +128,13 @@ export interface GameView {
   seq: number; score: number[];
 }
 
+export interface RematchInfo {
+  ready: { name: string; avatar: string }[];
+  waiting: { name: string; avatar: string }[];
+  iVoted: boolean;
+}
+
 export interface GameListItem {
   code: string; mode: Mode; maxPlayers: number;
-  playerCount: number; playerNames: string[]; status: Status;
+  playerCount: number; playerNames: string[]; playerAvatars: string[]; status: Status;
 }

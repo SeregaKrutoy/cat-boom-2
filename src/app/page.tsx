@@ -15,21 +15,16 @@ export default function Home() {
 
         <header className="mx-auto flex w-full max-w-7xl items-center justify-between gap-2 px-4 py-4 sm:gap-3 sm:px-6 lg:px-8">
           <Link href="/" className="flex min-w-0 items-center gap-2.5" aria-label="Взрывные котята — главная">
+            {/* Direct public file: /exploding-kitten-logo.png (unoptimized keeps this exact public URL). */}
             <Image
-              src="/images/kittens-logo.png"
-              alt=""
-              width={96}
-              height={96}
-              priority
+              src="/exploding-kitten-logo.png"
+              alt="Взрывной котёнок обнимает Землю"
+              width={96} height={96} unoptimized priority
               className="h-10 w-10 shrink-0 rounded-2xl object-cover"
             />
             <span className="font-display truncate text-lg leading-none sm:text-xl">Взрывные котята</span>
           </Link>
-          <div className="hidden items-center gap-2 rounded-full border border-line bg-panel px-4 py-2 text-xs font-semibold text-muted lg:flex">
-            <span className="h-2 w-2 rounded-full bg-mint" />
-            Дуэль для двоих · 32 карты
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <a href="#rules" className="rounded-full px-3 py-2 text-sm font-semibold text-muted transition hover:bg-ink/10 hover:text-ink sm:px-4">
               Правила
             </a>
@@ -40,10 +35,6 @@ export default function Home() {
 
         <div className="mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-10 px-4 pb-14 pt-8 sm:px-6 sm:pb-20 sm:pt-12 lg:grid-cols-[minmax(0,1fr)_minmax(340px,440px)] lg:gap-12 lg:px-8 lg:pb-24 lg:pt-14">
           <div className="min-w-0">
-            <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-accent/30 bg-accent-soft px-3 py-1.5 text-xs font-bold text-accent sm:text-sm">
-              <span aria-hidden="true">🐾</span>
-              <span>ДУЭЛЬ · 2 ИГРОКА · МОЖНО С БОТОМ</span>
-            </div>
             <h1 className="font-display mt-5 text-[clamp(3rem,13.5vw,6.75rem)] leading-[0.86] tracking-[-0.035em] text-ink">
               Взрывные
               <br />

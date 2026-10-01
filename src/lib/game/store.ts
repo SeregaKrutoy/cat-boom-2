@@ -2,7 +2,10 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { games } from "@/db/schema";
 import { botStep } from "./bot";
+import { prepareSavedRoom } from "./compat";
+import { assertRoomIntegrity } from "./deck";
 import { GameError, tick } from "./engine";
+import { DEFAULT_AVATAR } from "../profile";
 import { tournamentTick } from "./tournament";
 import type { GameListItem, GameState } from "./types";
 
@@ -39,12 +42,14 @@ export async function withGame<T>(
     const state = rows[0].state as GameState;
     const now = Date.now();
     const snapshot = JSON.stringify(state);
+    prepareSavedRoom(state, now);
     advance(state, now);
     let result: T | undefined;
     if (fn) {
       result = fn(state, now);
       advance(state, now);
     }
+    assertRoomIntegrity(state);
     if (JSON.stringify(state) !== snapshot) {
       await tx.update(games).set({ state, version: state.seq, updatedAt: new Date() }).where(eq(games.code, code));
     }
@@ -93,6 +98,7 @@ export async function listOpenGames(): Promise<GameListItem[]> {
       maxPlayers: s.maxPlayers,
       playerCount: s.players.length,
       playerNames: s.players.map((p) => p.name),
+      playerAvatars: s.players.map((p) => p.avatar ?? DEFAULT_AVATAR),
       status: s.status,
     }));
 }

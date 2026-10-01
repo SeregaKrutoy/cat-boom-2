@@ -1,7 +1,10 @@
 "use client";
 
+import { DEFAULT_AVATAR, randomAvatar, randomName, sanitizeAvatar } from "@/lib/profile";
+
 const TOKEN_KEY = "ek_token";
 const NAME_KEY = "ek_name";
+const AVATAR_KEY = "ek_avatar";
 
 export function getToken(): string {
   if (typeof window === "undefined") return "";
@@ -19,6 +22,30 @@ export function getToken(): string {
 export function getName(): string {
   if (typeof window === "undefined") return "";
   return localStorage.getItem(NAME_KEY) ?? "";
+}
+
+export function getAvatar(): string {
+  if (typeof window === "undefined") return DEFAULT_AVATAR;
+  return sanitizeAvatar(localStorage.getItem(AVATAR_KEY));
+}
+
+export function saveAvatar(avatar: string) {
+  localStorage.setItem(AVATAR_KEY, sanitizeAvatar(avatar));
+}
+
+/** Saved profile; a first-time visitor gets a random cat name and smiley that are then remembered. */
+export function loadProfile(): { name: string; avatar: string } {
+  let name = (localStorage.getItem(NAME_KEY) ?? "").trim();
+  if (!name) {
+    name = randomName();
+    localStorage.setItem(NAME_KEY, name);
+  }
+  let avatar = localStorage.getItem(AVATAR_KEY);
+  if (!avatar || sanitizeAvatar(avatar) !== avatar) {
+    avatar = randomAvatar();
+    localStorage.setItem(AVATAR_KEY, avatar);
+  }
+  return { name, avatar };
 }
 
 export function saveName(name: string) {

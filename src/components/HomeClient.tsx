@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { api, getName, getToken, saveName } from "@/lib/client";
+import { api, getToken, loadProfile, saveAvatar, saveName } from "@/lib/client";
+import { randomName } from "@/lib/profile";
+import { ProfileEditor } from "./ProfileEditor";
 import type { GameListItem } from "@/lib/game/types";
 
 export function HomeClient() {
@@ -11,12 +13,15 @@ export function HomeClient() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [avatar, setAvatar] = useState("😼");
   const [maxPlayers, setMaxPlayers] = useState(2);
   const [openGames, setOpenGames] = useState<GameListItem[]>([]);
 
   useEffect(() => {
+    const profile = loadProfile();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setName(getName());
+    setName(profile.name);
+    setAvatar(profile.avatar);
   }, []);
 
   const loadGames = useCallback(async () => {
@@ -35,12 +40,12 @@ export function HomeClient() {
 
   async function create(mode: "bot" | "friends" | "tournament") {
     setError(null);
-    const n = name.trim() || "Игрок";
+    const n = name.trim() || randomName();
     saveName(n);
     setBusy(mode);
     try {
       const { code } = await api<{ code: string }>("/api/games", {
-        mode, name: n, token: getToken(),
+        mode, name: n, avatar, token: getToken(),
         maxPlayers: mode === "bot" ? 2 : maxPlayers,
       });
       router.push(`/game/${code}`);
@@ -51,11 +56,11 @@ export function HomeClient() {
     const gc = (c ?? code).trim().toUpperCase();
     if (gc.length < 4) return setError("Введи код комнаты");
     setError(null);
-    const n = name.trim() || "Игрок";
+    const n = name.trim() || randomName();
     saveName(n);
     setBusy("join-" + gc);
     try {
-      await api(`/api/games/${gc}/join`, { name: n, token: getToken() });
+      await api(`/api/games/${gc}/join`, { name: n, avatar, token: getToken() });
       router.push(`/game/${gc}`);
     } catch (e) { setError((e as Error).message); setBusy(null); }
   }
@@ -63,18 +68,18 @@ export function HomeClient() {
   return (
     <div className="w-full min-w-0 rounded-[2rem] border border-line bg-surface p-5 shadow-[0_24px_70px_rgba(0,0,0,0.22)] sm:p-7">
       <div className="mb-5 flex items-start gap-3">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-2xl">😼</span>
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-2xl">{avatar}</span>
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-accent">Стол уже накрыт</p>
           <h2 className="font-display mt-1 text-2xl leading-tight text-ink sm:text-3xl">С кем сыграем?</h2>
         </div>
       </div>
 
-      <label htmlFor="player-name" className="mb-1.5 block text-sm font-semibold text-muted">Твоё имя</label>
-      <input
-        id="player-name" value={name} onChange={(e) => setName(e.target.value)}
-        maxLength={24} placeholder="Например, Кот Борис"
-        className="w-full min-w-0 rounded-xl border border-line bg-ink/5 px-4 py-3 text-base text-ink outline-none placeholder:text-muted/70 focus:border-accent focus:ring-4 focus:ring-accent/15"
+      <ProfileEditor
+        id="player-name" name={name} avatar={avatar}
+        onName={(v) => { setName(v); saveName(v); }}
+        onAvatar={(v) => { setAvatar(v); saveAvatar(v); }}
+        onReroll={() => { const v = randomName(name); setName(v); saveName(v); }}
       />
 
       <div className="mt-4 grid min-w-0 gap-2.5">
@@ -98,11 +103,11 @@ export function HomeClient() {
       </button>
 
       {/* Player count selector */}
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <span className="text-sm text-muted">Игроков:</span>
-        {[2, 3, 4].map((n) => (
+        {[2, 3, 4, 5, 6].map((n) => (
           <button key={n} onClick={() => setMaxPlayers(n)}
-            className={`h-9 w-9 rounded-lg text-sm font-bold transition ${
+            className={`h-9 w-8 rounded-lg text-sm font-bold transition ${
               maxPlayers === n ? "bg-accent text-white" : "bg-ink/10 text-muted hover:bg-ink/20"
             }`}>{n}</button>
         ))}
@@ -121,7 +126,7 @@ export function HomeClient() {
                 className="flex w-full items-center gap-3 rounded-xl border border-line bg-ink/5 p-2.5 text-left transition hover:bg-ink/10 disabled:opacity-60">
                 <span className="font-display text-lg text-accent">{g.code}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-ink">{g.playerNames.join(", ")}</p>
+                  <p className="truncate text-sm text-ink">{g.playerNames.map((n, i) => `${g.playerAvatars?.[i] ?? "😼"} ${n}`).join(", ")}</p>
                   <p className="text-xs text-muted">{g.mode === "tournament" ? `${g.playerCount} игр. · 🏆 турнир` : `${g.playerCount}/${g.maxPlayers} · ${g.mode === "bot" ? "бот" : "друзья"}`}</p>
                 </div>
                 <span className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white">Войти</span>

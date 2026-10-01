@@ -1,4 +1,3 @@
-import { nextAlive } from "./engine";
 import { applyAction } from "./engine";
 import type { Card, CardType, GameState } from "./types";
 
@@ -119,7 +118,7 @@ export function botStep(s: GameState, pi: number, now: number) {
 
   if (top) return applyAction(s, pi, { type: "draw" }, now);
 
-  const risk = 1 / Math.max(1, s.deck.length);
+  const risk = 1 / Math.max(1, s.deck.length); // the deck always holds exactly one kitten
   const defuses = count(hand, "defuse");
 
   if (s.players[target].hand.length) {

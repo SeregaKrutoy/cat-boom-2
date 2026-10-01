@@ -2,13 +2,17 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, getName, getToken, saveName } from "@/lib/client";
+import { api, getToken, loadProfile, saveAvatar, saveName } from "@/lib/client";
+import { randomName } from "@/lib/profile";
+import { ProfileEditor } from "./ProfileEditor";
 import { audio, type SfxName } from "@/lib/audio";
 import { SettingsButton } from "./AudioControls";
 import { CARD_INFO, NAMEABLE_TYPES, isCat } from "@/lib/game/cards";
 import type { Action, Card, CardType, GameEvent, GameView, PendingKind } from "@/lib/game/types";
 import { CardBack, CardFace } from "./CardView";
 import { Rules } from "./Rules";
+import { RoomCode } from "./RoomCode";
+import { peekStorageKey, readPeekDismissal, savePeekDismissal, shouldShowPeek } from "@/lib/game/presentation";
 import { ThemeToggle } from "./ThemeToggle";
 
 const KIND_LABEL: Record<PendingKind, string> = {
@@ -70,7 +74,7 @@ function StandingsTable({ v, compact = false }: { v: GameView; compact?: boolean
           <div key={r.idx} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${r.idx === t.myIdx ? "bg-accent-soft" : "bg-ink/5"}`}>
             <span className="w-6 shrink-0 text-center font-bold text-muted">{place + 1}</span>
             <span className="min-w-0 flex-1 truncate font-semibold text-ink">
-              {r.name}{r.idx === t.myIdx ? " (ты)" : ""}{busyNow.has(r.idx) ? " ⚔️" : ""}
+              {r.avatar} {r.name}{r.idx === t.myIdx ? " (ты)" : ""}{busyNow.has(r.idx) ? " ⚔️" : ""}
             </span>
             <span className="shrink-0 tabular-nums text-muted">{r.played}/{t.total - 1}</span>
             <span className="w-10 shrink-0 text-right font-display text-base text-heading">{r.wins}</span>
@@ -88,6 +92,7 @@ function TableSwitcher({ v, countdown, onPick }: { v: GameView; countdown: numbe
   return (
     <div className="min-w-0 border-b border-line bg-panel px-3 py-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <RoomCode code={v.code} compact />
         <span className="font-display text-base text-heading">🏆 Раунд {t.round} из {t.rounds}</span>
         <span className="text-muted">столов: {t.tables.length}</span>
         {t.bye && (
@@ -125,7 +130,7 @@ function TableSwitcher({ v, countdown, onPick }: { v: GameView; countdown: numbe
                 <span>Стол {tb.num}{tb.mine ? " · мой" : ""}</span>
                 <span className={tb.status === "finished" ? "text-good" : "text-heading"}>{tb.status === "finished" ? "✓" : "●"}</span>
               </span>
-              <span className="truncate text-xs text-ink">{tb.names[0]} — {tb.names[1]}</span>
+              <span className="truncate text-xs text-ink">{tb.avatars[0]} {tb.names[0]} — {tb.avatars[1]} {tb.names[1]}</span>
               <span className="truncate text-[11px] text-muted">
                 {tb.status === "finished" ? `победил(а) ${winner}` : tb.turn ? `ходит ${tb.turn}` : ""}
               </span>
@@ -133,6 +138,37 @@ function TableSwitcher({ v, countdown, onPick }: { v: GameView; countdown: numbe
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** «Реванш»: in games with people every player has to press it; shows who is ready. */
+function RematchBlock({ view, busy, label, onRematch }: { view: GameView; busy: boolean; label: string; onRematch: () => void }) {
+  const r = view.rematch;
+  const total = r ? r.ready.length + r.waiting.length : 0;
+  return (
+    <div className="mx-auto w-full max-w-sm">
+      <button
+        onClick={onRematch} disabled={busy || !!r?.iVoted}
+        className="w-full rounded-xl bg-highlight px-6 py-2 font-display text-2xl text-highlight-ink hover:brightness-110 disabled:opacity-60"
+      >
+        {r?.iVoted ? `✓ Ты готов(а) · ${r.ready.length}/${total}` : label}
+      </button>
+      {r && (
+        <div aria-live="polite" className="mt-3 rounded-xl border border-line bg-panel p-3 text-left text-sm">
+          <p className="mb-2 text-xs text-muted">
+            {r.iVoted ? "Ждём остальных — новая партия начнётся, когда все нажмут кнопку." : "Новая партия начнётся, когда все игроки нажмут кнопку."}
+          </p>
+          <ul className="space-y-1">
+            {r.ready.map((p, i) => (
+              <li key={`r${i}`} className="flex items-center gap-2 text-good"><span aria-hidden="true">✅</span><span className="truncate">{p.avatar} {p.name}</span><span className="ml-auto text-xs">готов(а)</span></li>
+            ))}
+            {r.waiting.map((p, i) => (
+              <li key={`w${i}`} className="flex items-center gap-2 text-muted"><span aria-hidden="true">⏳</span><span className="truncate">{p.avatar} {p.name}</span><span className="ml-auto text-xs">думает…</span></li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -160,6 +196,7 @@ export function GameClient({ code }: { code: string }) {
   const [now, setNow] = useState(0);
   const [busy, setBusy] = useState(false);
   const [joinName, setJoinName] = useState("");
+  const [joinAvatar, setJoinAvatar] = useState("😼");
   const [showRules, setShowRules] = useState(false);
   const [copied, setCopied] = useState(false);
   const seqRef = useRef(-1);
@@ -171,16 +208,34 @@ export function GameClient({ code }: { code: string }) {
   const reqRef = useRef(0);
   const tableRef = useRef<number | null | undefined>(undefined);
   const roundRef = useRef<number | null>(null);
+  const dealRef = useRef<string | null>(null);
+  const runRef = useRef<string | null>(null);
   const loadRef = useRef<() => void>(() => {});
 
   const accept = useCallback((v: GameView) => {
     if (v.seq < seqRef.current) return;
     seqRef.current = v.seq;
-    // A different table is on screen: start sounds and flashes from a clean slate
-    if (v.tableId !== tableRef.current) {
+    const run = v.tournament?.id ?? v.matchId;
+    if (runRef.current !== run) {
+      if (runRef.current !== null) watchRef.current = null;
+      runRef.current = run;
+      setDismissedFinal(false);
+      setDismissedRound(0);
+      setDismissedPeek({});
+    }
+    // Rematches and new tournament tables get completely independent card UI state.
+    if (v.tableId !== tableRef.current || v.matchId !== dealRef.current || v.me !== prevRef.current?.me) {
       tableRef.current = v.tableId;
+      dealRef.current = v.matchId;
       prevRef.current = null;
       eventSeq.current = null;
+      setSelected([]);
+      setTripleOpen(false);
+      setTargetOpen(false);
+      setPendingNamed(undefined);
+      setDefusePos(0);
+      setFlash(null);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
     }
     const round = v.tournament?.round ?? null;
     if (roundRef.current !== null && round !== null && round !== roundRef.current && v.tournament?.phase === "round") {
@@ -208,7 +263,9 @@ export function GameClient({ code }: { code: string }) {
   useEffect(() => {
     const t = getToken();
     setToken(t);
-    setJoinName(getName());
+    const profile = loadProfile();
+    setJoinName(profile.name);
+    setJoinAvatar(profile.avatar);
   }, [code]);
 
   useEffect(() => {
@@ -248,18 +305,18 @@ export function GameClient({ code }: { code: string }) {
     setBusy(true);
     try {
       const req = reqRef.current;
-      const v = await api<GameView>(`/api/games/${code}/action`, { token, action, watch: watchRef.current });
+      const v = await api<GameView>(`/api/games/${code}/action`, { token, action, watch: watchRef.current, matchId: view?.matchId });
       if (req === reqRef.current) accept(v);
       if (action.type === "play") setSelected([]);
     } catch (e) { showToast((e as Error).message); } finally { setBusy(false); }
   }
 
   async function join() {
-    const n = joinName.trim() || "Игрок";
+    const n = joinName.trim() || randomName();
     saveName(n);
     setBusy(true);
     try {
-      const v = await api<GameView>(`/api/games/${code}/join`, { token, name: n });
+      const v = await api<GameView>(`/api/games/${code}/join`, { token, name: n, avatar: joinAvatar });
       accept(v);
     } catch (e) { showToast((e as Error).message); } finally { setBusy(false); }
   }
@@ -297,12 +354,12 @@ export function GameClient({ code }: { code: string }) {
   const myTurn = view.status === "playing" && view.phase === "action" && view.current === me;
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/game/${view.code}` : "";
   const msLeft = view.pending ? Math.max(0, view.pending.msLeft - (now - recvAt)) : 0;
-  const iRespond = view.phase === "nope" && view.pending?.responder === me;
+  const iRespond = view.phase === "nope" && !!view.pending?.responders.includes(me);
   const hasNope = hand.some((c) => c.type === "nope");
   const tv = view.tournament;
   const roundCountdown = tv ? Math.max(0, Math.ceil((tv.nextRoundIn - (now - recvAt)) / 1000)) : 0;
-  const peekKey = `peek_${code}_${view.tableId ?? "x"}`;
-  const dismissedSeq = dismissedPeek[peekKey] ?? Number(sessionStorage.getItem(peekKey) ?? 0);
+  const peekKey = peekStorageKey(view);
+  const dismissedSeq = dismissedPeek[peekKey] ?? readPeekDismissal(peekKey);
 
   // ── Waiting room ──
   if (view.status === "waiting") {
@@ -314,8 +371,9 @@ export function GameClient({ code }: { code: string }) {
             <h1 className="font-display max-w-full break-words text-3xl sm:text-4xl">
               {view.mode === "tournament" ? "Зал ожидания турнира" : "Зал ожидания"}
             </h1>
+            <RoomCode code={view.code} />
             <p className="mt-2 text-muted">
-              Комната {view.code} · {view.mode === "tournament" ? `${view.players.length} игр.` : `${view.players.length}/${view.maxPlayers} игроков`}
+              {view.mode === "tournament" ? `${view.players.length} участников` : `${view.players.length}/${view.maxPlayers} игроков`}
             </p>
             {view.mode === "tournament" && (
               <div className="mx-auto mt-2 max-w-md text-sm text-muted">
@@ -338,7 +396,7 @@ export function GameClient({ code }: { code: string }) {
                 <div key={i} className={`flex items-center gap-3 rounded-xl border p-3 ${
                   i === me ? "border-accent bg-accent-soft" : "border-line bg-panel"
                 }`}>
-                  <span className="text-2xl">{p.isBot ? "🤖" : "😼"}</span>
+                  <span className="text-2xl">{p.avatar}</span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold text-ink">{p.name}{i === me ? " (ты)" : ""}</p>
                     <p className="text-xs text-muted">{i === 0 ? "создатель" : "участник"}</p>
@@ -368,13 +426,20 @@ export function GameClient({ code }: { code: string }) {
           </>
         ) : (
           <>
-            <div className="mb-2 text-7xl">😼</div>
-            <h1 className="font-display max-w-full break-words text-3xl sm:text-4xl">{view.players[0]?.name} зовёт на дуэль!</h1>
-            <div className="mx-auto mt-6 flex w-full max-w-sm gap-2">
-              <input value={joinName} onChange={(e) => setJoinName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && join()} placeholder="Твоё имя" maxLength={24}
-                className="min-w-0 flex-1 rounded-xl border border-line bg-ink/5 px-4 py-3 text-ink" />
-              <button onClick={join} disabled={busy} className="font-display text-xl rounded-xl bg-highlight px-5 text-highlight-ink">Играть</button>
+            <div className="mb-2 text-7xl">{joinAvatar}</div>
+            <h1 className="font-display max-w-full break-words text-3xl sm:text-4xl">{view.players[0]?.avatar} {view.players[0]?.name} приглашает в игру!</h1>
+            <RoomCode code={view.code} />
+            <div className="mx-auto mt-4 w-full max-w-sm">
+              <ProfileEditor
+                id="join-name" name={joinName} avatar={joinAvatar}
+                onName={(v) => { setJoinName(v); saveName(v); }}
+                onAvatar={(v) => { setJoinAvatar(v); saveAvatar(v); }}
+                onReroll={() => { const v = randomName(joinName); setJoinName(v); saveName(v); }}
+              />
+              <button onClick={join} disabled={busy}
+                className="mt-3 w-full rounded-xl bg-highlight px-5 py-3 font-display text-xl text-highlight-ink hover:brightness-110 disabled:opacity-50">
+                Играть
+              </button>
             </div>
           </>
         )}
@@ -406,6 +471,7 @@ export function GameClient({ code }: { code: string }) {
     else {
       playLabel = `Сыграть «${CARD_INFO[t].short}»`;
       playOk = true;
+      needsTarget = t === "favor";
     }
   } else if (selCards.length >= 2) {
     const same = selCards.every((c) => c.type === selCards[0].type);
@@ -456,10 +522,14 @@ export function GameClient({ code }: { code: string }) {
     status = `👀 Стол ${tbl?.num ?? ""}: ${view.players[0].name} против ${view.players[1].name} · ходит ${view.players[view.current]?.name}`;
   }
   else if (view.phase === "nope" && view.pending) {
-    status = iRespond ? "Соперник сыграл карту — ответишь «Неть»?"
-      : view.players[view.pending.responder].isBot
-        ? `${view.players[view.pending.responder].name} думает…`
-        : `Ждём ответа от ${view.players[view.pending.responder].name}…`;
+    const cancelled = view.pending.nopes % 2 === 1;
+    status = iRespond
+      ? cancelled
+        ? "Твою карту отменили «Неть»! Ответишь своим «Неть»?"
+        : "Можно ответить «Неть» или пропустить"
+      : cancelled
+        ? `Ждём ответа игрока, чей ход: ${view.players[view.pending.by].name}…`
+        : `Ждём ответа: ${view.pending.responders.map((i) => view.players[i].name).join(", ")}…`;
   } else if (view.phase === "favor" && view.favor) {
     status = view.favor.giver === me ? "Выбери карту, которую отдашь" : `${view.players[view.favor.giver].name} выбирает карту…`;
   } else if (view.phase === "defuse" && view.defuse) {
@@ -470,8 +540,9 @@ export function GameClient({ code }: { code: string }) {
     status = `Ходит ${view.players[view.current]?.name}${view.turnsLeft > 1 ? ` · ходов: ${view.turnsLeft}` : ""}`;
   }
 
-  const risk = view.deckCount ? Math.round(100 / view.deckCount) : 0;
-  const peekVisible = view.peek && view.peek.seq > dismissedSeq;
+  const kittensLeft = view.defuse ? 0 : 1; // there is exactly one kitten in the whole game
+  const risk = view.deckCount ? Math.min(100, Math.round(100 * kittensLeft / view.deckCount)) : 0;
+  const peekVisible = shouldShowPeek(view, dismissedSeq);
   const shaking = flash?.kind === "explode" || flash?.kind === "attack";
   const aliveOpponents = opponents.filter((p) => !p.exploded);
 
@@ -487,7 +558,7 @@ export function GameClient({ code }: { code: string }) {
             {view.mode === "bot" ? "🤖 Бот" : tv ? `🏆 Турнир · ${tv.total} игр.` : `${view.players.length} игрока(ов)`}
           </span>
           <span className="max-w-[42vw] truncate rounded-full bg-panel px-2.5 py-1 font-display text-sm sm:max-w-none sm:px-3 sm:text-base">
-            {tv ? `${tv.names[tv.myIdx]} · ${tv.standings.find((r) => r.idx === tv.myIdx)?.wins ?? 0} поб.` : `${meP?.name} ${view.score[me] ?? 0}`}
+            {tv ? `${tv.avatars[tv.myIdx]} ${tv.names[tv.myIdx]} · ${tv.standings.find((r) => r.idx === tv.myIdx)?.wins ?? 0} поб.` : `${meP?.avatar ?? ""} ${meP?.name} ${view.score[me] ?? 0}`}
           </span>
           <SettingsButton compact />
           <ThemeToggle compact />
@@ -508,7 +579,7 @@ export function GameClient({ code }: { code: string }) {
                     ? "border-highlight bg-highlight text-highlight-ink"
                     : p.exploded ? "border-line bg-panel opacity-40" : "border-line bg-panel"
                 }`}>
-                  <span className="shrink-0 text-xl">{p.isBot ? "🤖" : "😼"}</span>
+                  <span className="shrink-0 text-xl">{p.avatar}</span>
                   <div className="min-w-0">
                     <p className="truncate font-display text-sm leading-tight">{p.name}</p>
                     <p className="text-xs opacity-80">
@@ -616,7 +687,7 @@ export function GameClient({ code }: { code: string }) {
           <section className="w-full min-w-0 border-t border-line bg-panel-strong px-2 pb-4 pt-3 sm:px-4">
             <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
               <div className={`flex max-w-full min-w-0 items-center gap-2 rounded-full px-3 py-1 sm:px-4 ${myTurn ? "bg-highlight text-highlight-ink" : "bg-panel"}`}>
-                <span className="font-display min-w-0 max-w-[55vw] truncate text-lg sm:max-w-none">{meP?.name}</span>
+                <span className="font-display min-w-0 max-w-[55vw] truncate text-lg sm:max-w-none">{meP?.avatar} {meP?.name}</span>
                 <span className="shrink-0 text-sm opacity-80">· карт: {hand.length}</span>
               </div>
               <div className="flex w-full min-w-0 gap-2 sm:ml-auto sm:w-auto">
@@ -675,7 +746,7 @@ export function GameClient({ code }: { code: string }) {
             ))}
             {view.peek.cards.length === 0 && <p className="text-muted">Колода пуста</p>}
           </div>
-          <button onClick={() => { const sq = view.peek!.seq; setDismissedPeek((d) => ({ ...d, [peekKey]: sq })); sessionStorage.setItem(peekKey, String(sq)); }}
+          <button onClick={() => { const sq = view.peek!.seq; setDismissedPeek((d) => ({ ...d, [peekKey]: sq })); savePeekDismissal(peekKey, sq); }}
             className="rounded-xl bg-highlight px-6 py-2 font-display text-xl text-highlight-ink">
             Запомнил(а)
           </button>
@@ -744,13 +815,14 @@ export function GameClient({ code }: { code: string }) {
         <Modal onClose={() => setTargetOpen(false)}>
           <h2 className="font-display text-3xl">Выбери цель</h2>
           <p className="text-sm text-muted">
-            {pendingNamed ? `Кому назначить «${CARD_INFO[pendingNamed].name}»?` : "У кого украсть случайную карту?"}
+            {pendingNamed ? `У кого потребовать «${CARD_INFO[pendingNamed].name}»?`
+              : selCards.length === 1 && selCards[0].type === "favor" ? "Кто должен отдать тебе карту?" : "У кого украсть случайную карту?"}
           </p>
           <div className="my-5 flex flex-wrap justify-center gap-3">
             {aliveOpponents.map((p) => (
-              <button key={p.idx} onClick={() => doPlay(p.idx)}
-                className="flex items-center gap-3 rounded-xl border border-line bg-panel px-4 py-3 transition hover:border-highlight hover:bg-highlight/10">
-                <span className="text-2xl">{p.isBot ? "🤖" : "😼"}</span>
+              <button key={p.idx} onClick={() => doPlay(p.idx)} disabled={busy || p.handCount === 0}
+                className="flex max-w-full min-w-0 items-center gap-3 rounded-xl border border-line bg-panel px-4 py-3 transition hover:border-highlight hover:bg-highlight/10 disabled:opacity-40">
+                <span className="text-2xl">{p.avatar}</span>
                 <div className="text-left">
                   <p className="font-semibold text-ink">{p.name}</p>
                   <p className="text-xs text-muted">карт: {p.handCount}</p>
@@ -777,11 +849,10 @@ export function GameClient({ code }: { code: string }) {
           <div className="mx-auto mt-5 max-w-lg rounded-2xl border border-line bg-panel p-3">
             <StandingsTable v={view} />
           </div>
-          <div className="mt-5 flex flex-wrap justify-center gap-2">
-            <button onClick={() => send({ type: "rematch" })} disabled={busy}
-              className="rounded-xl bg-highlight px-6 py-2 font-display text-2xl text-highlight-ink hover:brightness-110 disabled:opacity-50">
-              Новый турнир
-            </button>
+          <div className="mt-5">
+            <RematchBlock view={view} busy={busy} label="Новый турнир" onRematch={() => send({ type: "rematch" })} />
+          </div>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
             <button onClick={() => setDismissedFinal(true)} className="rounded-xl bg-ink/10 px-5 py-2 font-display text-xl hover:bg-ink/20">Посмотреть столы</button>
             <Link href="/" className="flex items-center rounded-xl bg-ink/10 px-5 py-2 font-display text-xl">В меню</Link>
           </div>
@@ -822,11 +893,10 @@ export function GameClient({ code }: { code: string }) {
           <p className="mt-2 text-muted">
             {view.winner === me ? "Поздравляем! Ты последний выживший!" : `Победитель — ${view.players[view.winner ?? 0]?.name}.`}
           </p>
-          <div className="mt-4 flex justify-center gap-2">
-            <button onClick={() => send({ type: "rematch" })} disabled={busy}
-              className="rounded-xl bg-highlight px-6 py-2 font-display text-2xl text-highlight-ink">
-              Реванш!
-            </button>
+          <div className="mt-4">
+            <RematchBlock view={view} busy={busy} label="Реванш!" onRematch={() => send({ type: "rematch" })} />
+          </div>
+          <div className="mt-3 flex justify-center">
             <Link href="/" className="flex items-center rounded-xl bg-ink/10 px-5 py-2 font-display text-xl">В меню</Link>
           </div>
         </Modal>
@@ -855,7 +925,7 @@ export function GameClient({ code }: { code: string }) {
 }
 
 function Centered({ children }: { children: ReactNode }) {
-  return <div className="game-surface flex min-h-screen min-w-0 flex-col items-center justify-center overflow-x-clip px-4 text-center">{children}</div>;
+  return <div className="game-surface flex min-h-screen min-w-0 flex-col items-center justify-center overflow-x-clip px-4 py-6 text-center">{children}</div>;
 }
 
 function Toast({ text }: { text: string }) {
@@ -870,6 +940,7 @@ function Modal({ children, onClose, wide }: { children: ReactNode; onClose?: () 
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/70 p-3 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
       <div
+        role="dialog" aria-modal="true"
         className={`animate-pop my-auto max-h-[calc(100dvh-1.5rem)] w-full min-w-0 overflow-x-hidden overflow-y-auto break-words ${wide ? "max-w-5xl" : "max-w-xl"} rounded-3xl border-2 border-line bg-surface p-4 text-center shadow-2xl sm:max-h-[calc(100dvh-2rem)] sm:p-6`}
         onClick={(e) => e.stopPropagation()}
       >

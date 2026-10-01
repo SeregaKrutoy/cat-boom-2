@@ -6,7 +6,7 @@ export default async function GamePage({ params }: { params: Promise<{ code: str
   return (
     <>
       <MusicTrack track="game" />
-      <GameClient code={code.toUpperCase()} />
+      <GameClient key={code.toUpperCase()} code={code.toUpperCase()} />
     </>
   );
 }

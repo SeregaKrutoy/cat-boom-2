@@ -39,6 +39,8 @@ export function CardFace({
       onClick={onClick}
       disabled={onClick ? disabled : undefined}
       title={`${info.name}: ${info.description}`}
+      aria-label={onClick ? info.name : undefined}
+      aria-pressed={onClick ? !!selected : undefined}
       className={`relative shrink-0 ${SIZE[size]} rounded-xl border-4 ${info.accent} bg-gradient-to-br ${info.bg} shadow-lg shadow-black/40 flex flex-col items-center justify-between p-1.5 text-center transition-all duration-150 select-none ${
         onClick ? "cursor-pointer hover:-translate-y-2" : ""
       } ${selected ? "-translate-y-5 ring-4 ring-yellow-300 shadow-yellow-300/40" : ""} ${
