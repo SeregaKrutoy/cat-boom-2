@@ -180,6 +180,15 @@ input {
 }
 .animate-pop { animation: pop-in 0.25s ease-out; }
 
+@keyframes sticker-left-in {
+  0% { transform: translateX(-120%) scale(0.85); opacity: 0; }
+  12% { transform: translateX(0) scale(1.05); opacity: 1; }
+  22% { transform: translateX(0) scale(1); opacity: 1; }
+  82% { transform: translateX(0) scale(1); opacity: 1; }
+  100% { transform: translateX(-120%) scale(0.85); opacity: 0; }
+}
+.animate-sticker-left { animation: sticker-left-in 2.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
 @keyframes flicker {
   0%, 100% { transform: scaleY(1) translateY(0); opacity: 0.9; }
   50% { transform: scaleY(1.15) translateY(-4px); opacity: 1; }

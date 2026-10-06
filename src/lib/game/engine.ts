@@ -59,7 +59,7 @@ export function createState(code: string, mode: Mode, host: { id: string; name: 
     players: [{ id: host.id, name: host.name, avatar: sanitizeAvatar(host.avatar), isBot: false, hand: [], exploded: false }],
     deck: [], discard: [], current: 0, turnsLeft: 1, underAttack: false,
     phase: "action", pending: null, favor: null, defuse: null, peek: null,
-    log: [], winner: null, botNextAt: null, botKnown: [], event: null,
+    log: [], chat: [], winner: null, botNextAt: null, botKnown: [], event: null,
     seq: 0, games: 0, score: [], hostId: host.id, matchId: uid(),
   };
   if (mode === "bot") {
@@ -96,9 +96,9 @@ export function addPlayer(s: GameState, id: string, name: string, now: number, a
   s.score.push(0);
   bump(s);
   log(s, `${name} присоединился(ась) к игре (${s.players.length}/${s.maxPlayers})`);
-  // Tournaments start only when the host presses "start" — any number of players from 2 up
-  if (s.mode !== "tournament" && s.players.length >= s.maxPlayers) {
-    startGame(s, now);
+  // Never auto-start: even a full room waits for the host to press "start".
+  if (s.players.length >= s.maxPlayers) {
+    log(s, `Комната заполнена — хост может начинать игру!`, { tone: "good" });
   }
 }
 
@@ -193,23 +193,33 @@ function endTurnStep(s: GameState) {
 }
 
 /**
- * Who may play «Неть» right now.
- *  - Card in force (0, 2, 4… Nopes): any living player EXCEPT the one who played it.
- *  - Card cancelled (1, 3, 5… Nopes): ONLY the player whose turn it is (who played the card)
- *    may answer the Nope with their own Nope — nobody else can rescue it.
+ * The player a pending card is played "on".
+ * Favor/pair/triple carry an explicit target; every other card targets the next
+ * alive player after the one who played it (the one most affected by the move).
+ */
+export function pendingTarget(s: GameState): number {
+  const p = s.pending;
+  if (!p) return -1;
+  if (p.target !== undefined && s.players[p.target] && !s.players[p.target].exploded) return p.target;
+  if (p.target !== undefined && s.players[p.target]?.exploded) return nextAlive(s, p.target);
+  return nextAlive(s, p.by);
+}
+
+/**
+ * Who may play «Неть» right now — a duel between the two involved players only.
+ *  - Card in force (0, 2, 4… Nopes): ONLY the targeted player may contest it.
+ *  - Card cancelled (1, 3, 5… Nopes): ONLY the player who played the card may
+ *    answer with their own Nope. Bystanders can never join the chain.
  */
 export function reactionPlayers(s: GameState): number[] {
   const p = s.pending;
   if (!p) return [];
   const passed = p.passed ?? [];
-  const canAct = (i: number) => !s.players[i].exploded && !passed.includes(i);
+  const canAct = (i: number) => i >= 0 && !s.players[i].exploded && !passed.includes(i);
   if (p.nopes % 2 === 1) return canAct(p.by) ? [p.by] : [];
-  const result: number[] = [];
-  for (let step = 1; step < s.players.length; step++) {
-    const i = (p.by + step) % s.players.length;
-    if (i !== p.by && canAct(i)) result.push(i);
-  }
-  return result;
+  const t = pendingTarget(s);
+  if (t === p.by) return [];
+  return canAct(t) ? [t] : [];
 }
 
 export function responder(s: GameState): number {
@@ -378,10 +388,10 @@ export function applyAction(s: GameState, pi: number, a: Action, now: number) {
         if (t === "nope") fail("«Неть» играется только в ответ на действие соперника");
         if (t === "defuse") fail("«Обезвредь» сработает сама");
         if (t === "cat1" || t === "cat2" || t === "cat3") fail("Кошкокарта сама по себе бесполезна — нужна пара или тройка");
-        const target = t === "favor" ? chooseTarget(s, pi, a.target) : undefined;
+        const target = t === "favor" ? chooseTarget(s, pi, a.target) : nextAlive(s, pi);
         const cards = takeCards(s, pi, ids);
         s.discard.push(...cards);
-        log(s, `${me.name} играет «${cardName(t)}»`);
+        log(s, `${me.name} играет «${cardName(t)}» (на: ${s.players[target].name})`);
         openPending(s, pi, t as PendingKind, cards, now, undefined, target);
       } else {
         if (!preview.every((c) => c.type === t)) fail("Для комбинации нужны одинаковые карты");
@@ -405,9 +415,9 @@ export function applyAction(s: GameState, pi: number, a: Action, now: number) {
     case "nope": {
       if (s.phase !== "nope" || !s.pending) fail("Нечего отменять");
       if (!reactionPlayers(s).includes(pi)) {
-        fail(s.pending.nopes % 2 === 1
-          ? "Ответить на «Неть» может только игрок, чей сейчас ход"
-          : "Сейчас нельзя ответить на эту карту");
+        if (s.pending.nopes % 2 === 1) fail("Ответить на «Неть» может только игрок, чей сейчас ход");
+        const t = pendingTarget(s);
+        fail(t >= 0 ? `Оспорить карту может только ${s.players[t].name} — ход сделан на него` : "Сейчас нельзя ответить на эту карту");
       }
       const nope = me.hand.find((c) => c.type === "nope") ?? fail("У тебя нет карты «Неть»");
       takeCards(s, pi, [nope.id]);

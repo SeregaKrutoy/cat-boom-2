@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { addPlayer, applyAction, createState, responder } from "../src/lib/game/engine";
+import { addPlayer, applyAction, createState, hostStart, responder } from "../src/lib/game/engine";
 import { assertDeckIntegrity, physicalCards } from "../src/lib/game/deck";
 import type { Action, Card, CardType, GameState } from "../src/lib/game/types";
 
@@ -12,6 +12,8 @@ export const DUEL_COUNTS = {
 export function makeGame(n = 2): GameState {
   const s = createState("TESTS", "friends", { id: "player-token-0", name: "Игрок 0" }, n);
   for (let i = 1; i < n; i++) addPlayer(s, `player-token-${i}`, `Игрок ${i}`, TEST_NOW);
+  // Full rooms never auto-start: the host presses "start", like in the real UI.
+  hostStart(s, "player-token-0", TEST_NOW);
   s.current = 0;
   return s;
 }

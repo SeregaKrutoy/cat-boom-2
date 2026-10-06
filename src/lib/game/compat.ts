@@ -27,6 +27,7 @@ function prepareTable(s: GameState, now: number): boolean {
 }
 
 export function prepareSavedRoom(s: GameState, now: number): void {
+  if (!Array.isArray(s.chat)) s.chat = [];
   if (s.mode !== "tournament") {
     prepareTable(s, now);
     return;

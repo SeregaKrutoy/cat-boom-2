@@ -2,10 +2,16 @@ import { randomUUID } from "node:crypto";
 import { ALL_TYPES, CARD_INFO } from "./cards";
 import type { Card, CardType, GameState } from "./types";
 
-export const DECK_VERSION = 3;
+export const DECK_VERSION = 4;
 export type DeckCounts = Record<CardType, number>;
 
-/** The supplied rules describe a 32-card duel. Counts include both hands and the deck. */
+/**
+ * The supplied rules describe a 32-card duel. Counts include both hands and the deck.
+ * Multiplayer (3–6 players) adds, relative to the duel, for each player beyond 2:
+ * attack/shuffle +1, skip/favor/future/nope +1 on top of a base +2 at 3 players,
+ * each cat +2. Defuse = players + 1, kitten is always 1.
+ * Totals: 32 / 49 / 62 / 75 / 88 for 2 / 3 / 4 / 5 / 6 players.
+ */
 export function getDeckCounts(players: number): DeckCounts {
   if (!Number.isInteger(players) || players < 2 || players > 6) {
     throw new Error("За одним столом должно быть от 2 до 6 игроков");
@@ -13,24 +19,19 @@ export function getDeckCounts(players: number): DeckCounts {
   const duel = Object.fromEntries(ALL_TYPES.map((type) => [type, CARD_INFO[type].count])) as DeckCounts;
   if (players === 2) return duel;
 
-  // Explicit multiplayer extension, not used for bots or tournament duels.
-  // Defuse = players + 1 (one in each starting hand + one spare in the deck).
-  // There is ALWAYS exactly one kitten, regardless of the number of players.
-  const common = Math.max(4, players);
-  const tactical = Math.max(5, players + 1);
   return {
     ...duel,
     kitten: 1,
     defuse: players + 1,
-    attack: common,
-    skip: common,
-    favor: common,
-    shuffle: common,
-    future: tactical,
-    nope: tactical,
-    cat1: common,
-    cat2: common,
-    cat3: common,
+    attack: players,
+    shuffle: players,
+    skip: players + 2,
+    favor: players + 2,
+    future: players + 2,
+    nope: players + 2,
+    cat1: players * 2,
+    cat2: players * 2,
+    cat3: players * 2,
   };
 }
 

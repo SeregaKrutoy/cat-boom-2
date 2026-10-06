@@ -25,6 +25,18 @@ export interface LogEntry {
 
 export interface Peek { player: number; cards: Card[]; seq: number; }
 
+export interface ChatMessage {
+  id: number;
+  from: number; // room player index
+  name: string;
+  avatar: string;
+  kind: "text" | "sticker";
+  text?: string;
+  sticker?: string; // sticker id, see src/lib/stickers.ts
+  ts: number;
+  tableId?: number | null; // which tournament table this belongs to (null if room-wide)
+}
+
 export type Mode = "friends" | "bot" | "tournament";
 export type Status = "waiting" | "playing" | "finished";
 export type Phase = "action" | "nope" | "favor" | "defuse";
@@ -69,6 +81,7 @@ export interface GameState {
   favor: { giver: number; receiver: number } | null;
   defuse: { player: number; kitten: Card } | null;
   peek: Peek | null; log: LogEntry[];
+  chat?: ChatMessage[]; // room-wide chat (optional: rooms saved before chat existed)
   winner: number | null;
   botNextAt: number | null; botKnown: string[];
   event: GameEvent | null; seq: number;
@@ -124,6 +137,7 @@ export interface GameView {
   favor: { giver: number; receiver: number } | null;
   defuse: { player: number } | null;
   peek: Peek | null; log: LogEntry[];
+  chat: ChatMessage[];
   winner: number | null; event: GameEvent | null;
   seq: number; score: number[];
 }

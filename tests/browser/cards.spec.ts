@@ -26,6 +26,11 @@ async function joinRoom(request: APIRequestContext, code: string, token: string,
   expect(res.ok(), await res.text()).toBeTruthy();
 }
 
+async function startRoom(request: APIRequestContext, code: string, host: string) {
+  const res = await request.post(`/api/games/${code}/start`, { data: { token: host } });
+  expect(res.ok(), await res.text()).toBeTruthy();
+}
+
 async function state(code: string): Promise<GameState> {
   const [row] = await db.select().from(games).where(eq(games.code, code));
   if (!row) throw new Error("Test room is missing");
@@ -106,7 +111,10 @@ for (const mode of ["friends", "bot"] as const) {
 test(`Future works after the real Rematch button against ${mode}, including stored dismissals`, async ({ page, request }) => {
   const host = randomUUID(), other = randomUUID();
   const code = await createRoom(request, mode, host);
-  if (mode === "friends") await joinRoom(request, code, other);
+  if (mode === "friends") {
+    await joinRoom(request, code, other);
+    await startRoom(request, code, host);
+  }
   await seedFuture(code);
   await initPlayer(page, host);
   const errors: string[] = [];
@@ -233,6 +241,7 @@ test("Favor in a 3-player room honors the chosen player in the real UI", async (
   madeRooms.push(code);
   await joinRoom(request, code, b, "Василий");
   await joinRoom(request, code, c, "Семён");
+  await startRoom(request, code, host);
   await scenario(code, (s) => arrange(s, [["favor", "defuse"], ["cat1"], ["cat2", "defuse"]]));
   await initPlayer(page, host);
   await page.goto(`/game/${code}`);
@@ -242,8 +251,9 @@ test("Favor in a 3-player room honors the chosen player in the real UI", async (
   await expect(picker).toBeVisible();
   await picker.getByRole("button", { name: /Семён/ }).click();
   await expect.poll(async () => (await state(code)).pending?.target).toBe(2);
+  // Only Семён (the target) may react — Василий is a bystander now
   const p1 = await request.post(`/api/games/${code}/action`, { data: { token: b, action: { type: "pass" } } });
-  expect(p1.ok()).toBeTruthy();
+  expect(p1.status()).toBe(400);
   expect((await state(code)).phase).toBe("nope");
   const p2 = await request.post(`/api/games/${code}/action`, { data: { token: c, action: { type: "pass" } } });
   expect(p2.ok()).toBeTruthy();
@@ -258,6 +268,7 @@ test("Nope chain, 3 players in the real UI: only the player whose turn it is may
   madeRooms.push(code);
   await joinRoom(request, code, b, "Василий");
   await joinRoom(request, code, c, "Семён");
+  await startRoom(request, code, host);
   await scenario(code, (s) => arrange(s, [["skip", "nope", "defuse"], ["nope", "nope", "defuse"], ["nope", "defuse"]]));
   // keep the reaction window open while the test talks to the server and the browser
   const keepOpen = () => scenario(code, (s) => { if (s.pending) s.pending.deadline = Date.now() + 60_000; });
@@ -273,12 +284,17 @@ test("Nope chain, 3 players in the real UI: only the player whose turn it is may
   expect((await played).ok()).toBeTruthy();
   await keepOpen();
 
-  // player B cancels the card
+  // player C is a bystander: the move targets B, so C cannot contest at all
+  const outsider = await nope(c);
+  expect(outsider.status()).toBe(400);
+  expect((await outsider.json()).error).toContain("ход сделан на него");
+
+  // player B (the target) cancels the card
   const first = await nope(b);
   expect(first.ok(), await first.text()).toBeTruthy();
   await keepOpen();
 
-  // player C also has a Nope, but only the player whose turn it is may answer now
+  // now only the host (whose turn it is) may answer the Nope
   const bystander = await nope(c);
   expect(bystander.status()).toBe(400);
   expect((await bystander.json()).error).toContain("чей сейчас ход");
@@ -291,13 +307,12 @@ test("Nope chain, 3 players in the real UI: only the player whose turn it is may
   await expect.poll(async () => (await state(code)).pending?.nopes).toBe(2);
   await keepOpen();
 
-  // the card is in force again: now the other players may answer (B still has a Nope)
-  const second = await nope(c);
+  // the card is in force again: only the target B may answer (B still has a Nope)
+  const outsider2 = await nope(c);
+  expect(outsider2.status()).toBe(400);
+  const second = await nope(b);
   expect(second.ok(), await second.text()).toBeTruthy();
   await keepOpen();
-  const again = await nope(b);
-  expect(again.status()).toBe(400);
-  expect((await again.json()).error).toContain("чей сейчас ход");
 
   // the host has nothing more to answer with and lets the cancellation stand
   await expect(page.getByText("Твою карту отменили", { exact: false })).toBeVisible();
@@ -391,6 +406,8 @@ test("The chosen smiley appears next to the name for everybody in the room and i
   await guestPage.getByRole("radio", { name: "Смайлик 😹", exact: true }).click();
   const guestName = await gName.inputValue();
   await guestPage.getByRole("button", { name: "Играть", exact: true }).click();
+  await expect(page.getByText("Комната заполнена", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "🚀 Начать игру!", exact: true }).click();
   await expect.poll(async () => (await state(code)).status).toBe("playing");
   const saved = await state(code);
   expect(saved.players.map((p) => p.avatar)).toEqual(["🦁", "😹"]);
@@ -427,6 +444,7 @@ test("Rematch in a 3-player room waits for everybody and shows who is ready", as
   madeRooms.push(code);
   await joinRoom(request, code, b, "Василий");
   await joinRoom(request, code, c, "Семён");
+  await startRoom(request, code, host);
   await scenario(code, (s) => {
     arrange(s, [["cat1"], ["defuse"], ["defuse"]], ["kitten"]);
     s.players[1].exploded = true; // two players left, then the host explodes: the game ends
@@ -452,7 +470,7 @@ test("Rematch in a 3-player room waits for everybody and shows who is ready", as
   expect(v2.ok()).toBeTruthy();
   await expect.poll(async () => (await state(code)).matchId).not.toBe(before);
   expect((await state(code)).status).toBe("playing");
-  expect(counts(await state(code))).toEqual({ ...DUEL_COUNTS, kitten: 1, defuse: 4, attack: 4, skip: 4, favor: 4, shuffle: 4, future: 5, nope: 5 });
+  expect(counts(await state(code))).toEqual({ ...DUEL_COUNTS, kitten: 1, defuse: 4, attack: 3, skip: 5, favor: 5, shuffle: 3, future: 5, nope: 5, cat1: 6, cat2: 6, cat3: 6 });
 });
 
 
@@ -471,21 +489,168 @@ test("A six-player room starts only after the sixth player and gives everybody t
     expect(joined.ok(), await joined.text()).toBeTruthy();
     const s = await state(code);
     expect(s.players.length).toBe(i + 1);
-    expect(s.status).toBe(i === 5 ? "playing" : "waiting");
+    expect(s.status, "even a full room waits for the host button").toBe("waiting");
   }
+  expect((await state(code)).log.some((l) => l.text.includes("Комната заполнена"))).toBeTruthy();
+  await startRoom(request, code, tokens[0]);
   const s = await state(code);
+  expect(s.status).toBe("playing");
   expect(s.maxPlayers).toBe(6);
   expect(s.players).toHaveLength(6);
   expect(s.players.every((p) => p.hand.length === 8 && p.hand.filter((c) => c.type === "defuse").length === 1)).toBeTruthy();
-  expect(s.deck).toHaveLength(16);
+  expect(s.deck).toHaveLength(40);
   expect(s.deck.filter((c) => c.type === "kitten")).toHaveLength(1);
   expect(s.deck.filter((c) => c.type === "defuse")).toHaveLength(1);
   expect(counts(s)).toEqual({
-    kitten: 1, defuse: 7, attack: 6, skip: 6, favor: 6, shuffle: 6,
-    future: 7, nope: 7, cat1: 6, cat2: 6, cat3: 6,
+    kitten: 1, defuse: 7, attack: 6, skip: 8, favor: 8, shuffle: 6,
+    future: 8, nope: 8, cat1: 12, cat2: 12, cat3: 12,
   });
   const seventh = await request.post(`/api/games/${code}/join`, {
     data: { token: randomUUID(), name: "Лишний", avatar: "😼" },
   });
   expect(seventh.status()).toBe(400);
+});
+
+test("Stickers appear from the left edge of the table and stay attached to it without blocking center", async ({ page, request }) => {
+  const host = randomUUID(), other = randomUUID();
+  const code = await createRoom(request, "friends", host);
+  await joinRoom(request, code, other, "Василий");
+  await startRoom(request, code, host);
+  await initPlayer(page, host);
+  await page.goto(`/game/${code}`);
+
+  // Click player name above hand to open stickers
+  const nameButton = page.locator("main section").filter({ hasText: "карт:" }).getByRole("button", { name: /Кот Борис/ });
+  await expect(nameButton).toBeVisible();
+  await nameButton.click();
+
+  // Sticker grid is open
+  const grid = page.getByRole("dialog", { name: "Быстрые стикеры" });
+  await expect(grid).toBeVisible();
+
+  // Click a sticker: menu closes and sticker appears on the left of the table
+  const boomButton = grid.getByRole("button", { name: "Стикер Бабах!" });
+  await boomButton.click();
+
+  // Menu is hidden immediately
+  await expect(grid).not.toBeVisible();
+
+  // Sticker flash appears attached to the left of the table area
+  const flash = page.getByTestId("sticker-flash");
+  await expect(flash).toBeVisible();
+  await expect(flash).toContainText("💥");
+  await expect(flash).toContainText("Кот Борис");
+
+  // Check positioning: attached to the left side
+  const box = await flash.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeLessThan(100); // left-aligned, near the left edge of table
+  expect(await flash.evaluate((el) => el.classList.contains("pointer-events-none"))).toBe(true);
+});
+
+test("The sticker picker shows all 29 stickers, scrolls, and a new sticker reaches the table", async ({ page, request }) => {
+  const host = randomUUID(), other = randomUUID();
+  const code = await createRoom(request, "friends", host);
+  await joinRoom(request, code, other, "Василий");
+  await startRoom(request, code, host);
+  await initPlayer(page, host);
+  await page.setViewportSize({ width: 360, height: 700 });
+  await page.goto(`/game/${code}`);
+  await page.locator("main section").filter({ hasText: "карт:" }).getByRole("button", { name: /Кот Борис/ }).click();
+  const grid = page.getByRole("dialog", { name: "Быстрые стикеры" });
+  await expect(grid.getByRole("button")).toHaveCount(29);
+  const box = await grid.boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(await grid.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  const evil = grid.getByRole("button", { name: "Стикер Муа-ха-ха!" });
+  await evil.scrollIntoViewIfNeeded();
+  await evil.click();
+  await expect(grid).not.toBeVisible();
+  await expect(page.getByTestId("sticker-flash")).toContainText("😈");
+});
+
+test("Rapid stickers stack instead of replacing each other", async ({ page, request }) => {
+  const host = randomUUID(), other = randomUUID();
+  const code = await createRoom(request, "friends", host);
+  await joinRoom(request, code, other, "Василий");
+  await startRoom(request, code, host);
+  await initPlayer(page, host);
+  await page.goto(`/game/${code}`);
+  await expect(page.getByRole("button", { name: "Взять карту", exact: true })).toBeVisible();
+
+  // Two different players send stickers back-to-back (no shared cooldown)
+  const r1 = await request.post(`/api/games/${code}/chat`, { data: { token: host, sticker: "boom" } });
+  expect(r1.ok(), await r1.text()).toBeTruthy();
+  const r2 = await request.post(`/api/games/${code}/chat`, { data: { token: other, sticker: "laugh" } });
+  expect(r2.ok(), await r2.text()).toBeTruthy();
+
+  // Both stickers must be visible at the same time, stacked on the left
+  const flashes = page.getByTestId("sticker-flash");
+  await expect.poll(async () => flashes.count(), { timeout: 8000 }).toBe(2);
+  await expect(flashes.nth(0)).toContainText("💥");
+  await expect(flashes.nth(1)).toContainText("😹");
+
+  // Each disappears on its own timer — the first one leaves while the second stays
+  await expect.poll(async () => flashes.count(), { timeout: 8000 }).toBe(0);
+});
+
+test("In tournaments, stickers appear only on the watched table, and observers can send to watched table", async ({ browser, request }) => {
+  const p0 = randomUUID(), p1 = randomUUID(), p2 = randomUUID(), p3 = randomUUID(), p4 = randomUUID();
+  const code = await createRoom(request, "tournament", p0);
+  await joinRoom(request, code, p1, "P1");
+  await joinRoom(request, code, p2, "P2");
+  await joinRoom(request, code, p3, "P3");
+  await joinRoom(request, code, p4, "P4");
+  await startRoom(request, code, p0);
+
+  const s = await state(code);
+  const t = s.tournament!;
+  const table1 = t.tables[0];
+  const table2 = t.tables[1];
+  const restingIdx = t.bye!;
+  const restingToken = s.players[restingIdx].id;
+
+  // Browser 1: Player at Table 1
+  const pageT1 = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await pageT1.addInitScript((token) => {
+    localStorage.setItem("ek_token", token);
+    localStorage.setItem("ek_audio", JSON.stringify({ master: 0, music: 0, sfx: 0, muted: true, musicOn: false, sfxOn: false }));
+  }, s.players[table1.a].id);
+  await pageT1.goto(`/game/${code}`);
+
+  // Browser 2: Observer watching Table 2
+  const pageObs = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await pageObs.addInitScript((token) => {
+    localStorage.setItem("ek_token", token);
+    localStorage.setItem("ek_audio", JSON.stringify({ master: 0, music: 0, sfx: 0, muted: true, musicOn: false, sfxOn: false }));
+  }, restingToken);
+  await pageObs.goto(`/game/${code}`);
+
+  // Observer switches to Table 2 (if not already there)
+  const t2Btn = pageObs.getByRole("button", { name: new RegExp(`Стол ${table2.id === t.tables[1].id ? "2" : "1"}`) });
+  await t2Btn.click();
+  await expect(pageObs.getByText(`Стол 2:`, { exact: false })).toBeVisible();
+
+  // Observer sends a sticker by clicking on their name in spectator banner
+  const obsNameBtn = pageObs.locator("main section").filter({ hasText: "В этом раунде у тебя пауза" }).getByRole("button", { name: /\(ты\)/ });
+  await expect(obsNameBtn).toBeVisible();
+  await obsNameBtn.click();
+  const obsGrid = pageObs.getByRole("dialog", { name: "Быстрые стикеры" });
+  await expect(obsGrid).toBeVisible();
+  await obsGrid.getByRole("button", { name: "Стикер Легко!" }).click();
+  await expect(obsGrid).not.toBeVisible();
+
+  // Observer sees the sticker on Table 2
+  const obsFlash = pageObs.getByTestId("sticker-flash");
+  await expect(obsFlash).toBeVisible();
+  await expect(obsFlash).toContainText("😎");
+
+  // Player at Table 1 must NOT see this sticker
+  const t1Flash = pageT1.getByTestId("sticker-flash");
+  await expect(t1Flash).toHaveCount(0);
+
+  await pageT1.close();
+  await pageObs.close();
 });

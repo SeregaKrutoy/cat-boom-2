@@ -8,8 +8,9 @@ import { ProfileEditor } from "./ProfileEditor";
 import { audio, type SfxName } from "@/lib/audio";
 import { SettingsButton } from "./AudioControls";
 import { CARD_INFO, NAMEABLE_TYPES, isCat } from "@/lib/game/cards";
-import type { Action, Card, CardType, GameEvent, GameView, PendingKind } from "@/lib/game/types";
+import type { Action, Card, CardType, ChatMessage, GameEvent, GameView, PendingKind } from "@/lib/game/types";
 import { CardBack, CardFace } from "./CardView";
+import { ChatPanel, StickerGrid, StickerStack } from "./Chat";
 import { Rules } from "./Rules";
 import { RoomCode } from "./RoomCode";
 import { peekStorageKey, readPeekDismissal, savePeekDismissal, shouldShowPeek } from "@/lib/game/presentation";
@@ -57,6 +58,16 @@ function playSoundsFor(prev: GameView, v: GameView) {
     audio.play(t.champion === t.myIdx || t.tie.includes(t.myIdx) ? "win" : "lose", 1.0);
   } else if (!v.spectator && prev.status !== "finished" && v.status === "finished") {
     audio.play(v.winner === v.me ? "win" : "lose", 1.0);
+  }
+  const prevIds = new Set(prev.chat.map((m) => m.id));
+  const roomIdx = v.tournament ? v.tournament.myIdx : v.me;
+  for (const m of v.chat) {
+    if (!prevIds.has(m.id) && m.from !== roomIdx) {
+      if (!m.tableId || !v.tableId || m.tableId === v.tableId) {
+        if (m.kind === "sticker" && m.sticker) audio.playSticker(m.sticker);
+        else audio.play("chat");
+      }
+    }
   }
 }
 
@@ -199,6 +210,10 @@ export function GameClient({ code }: { code: string }) {
   const [joinAvatar, setJoinAvatar] = useState("😼");
   const [showRules, setShowRules] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sideTab, setSideTab] = useState<"log" | "chat">("log");
+  const [stickersOpen, setStickersOpen] = useState(false);
+  const [stickerPops, setStickerPops] = useState<ChatMessage[]>([]);
+  const [seenChatId, setSeenChatId] = useState(0);
   const seqRef = useRef(-1);
   const prevRef = useRef<GameView | null>(null);
   const eventSeq = useRef<number | null>(null);
@@ -211,6 +226,8 @@ export function GameClient({ code }: { code: string }) {
   const dealRef = useRef<string | null>(null);
   const runRef = useRef<string | null>(null);
   const loadRef = useRef<() => void>(() => {});
+  const seenInitRef = useRef(false);
+  const popShownRef = useRef<Set<number>>(new Set());
 
   const accept = useCallback((v: GameView) => {
     if (v.seq < seqRef.current) return;
@@ -235,6 +252,7 @@ export function GameClient({ code }: { code: string }) {
       setPendingNamed(undefined);
       setDefusePos(0);
       setFlash(null);
+      setStickerPops([]);
       if (flashTimer.current) clearTimeout(flashTimer.current);
     }
     const round = v.tournament?.round ?? null;
@@ -292,6 +310,35 @@ export function GameClient({ code }: { code: string }) {
     return () => clearInterval(id);
   }, []);
 
+  // Mark chat as read while the chat tab is open; first load is silent.
+  useEffect(() => {
+    const chat = view?.chat ?? [];
+    const lastId = chat.length ? chat[chat.length - 1].id : 0;
+    if (!seenInitRef.current) {
+      seenInitRef.current = true;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSeenChatId(lastId);
+      return;
+    }
+    if (sideTab === "chat" && lastId > 0) setSeenChatId(lastId);
+  }, [view?.chat, sideTab]);
+
+  // Queue every fresh sticker, each with its own lifetime — rapid stickers stack instead of replacing each other.
+  useEffect(() => {
+    const chat = view?.chat ?? [];
+    const fresh = chat.filter(
+      (m) => m.kind === "sticker" && !popShownRef.current.has(m.id) && Date.now() - m.ts < 10000,
+    );
+    if (fresh.length === 0) return;
+    for (const m of fresh) popShownRef.current.add(m.id);
+    setStickerPops((prev) => [...prev, ...fresh].slice(-4));
+    for (const m of fresh) {
+      setTimeout(() => {
+        setStickerPops((prev) => prev.filter((x) => x.id !== m.id));
+      }, 2600);
+    }
+  }, [view?.chat]);
+
   const showToast = (msg: string) => { audio.play("error"); setToast(msg); setTimeout(() => setToast((t) => t === msg ? null : t), 3000); };
 
   function pickTable(id: number | null) {
@@ -330,6 +377,23 @@ export function GameClient({ code }: { code: string }) {
     } catch (e) { showToast((e as Error).message); } finally { setBusy(false); }
   }
 
+  async function sendChatText(text: string) {
+    try {
+      const v = await api<GameView>(`/api/games/${code}/chat`, { token, text, watch: watchRef.current });
+      audio.play("select");
+      accept(v);
+    } catch (e) { showToast((e as Error).message); }
+  }
+
+  async function sendSticker(id: string) {
+    setStickersOpen(false);
+    try {
+      const v = await api<GameView>(`/api/games/${code}/chat`, { token, sticker: id, watch: watchRef.current });
+      audio.playSticker(id, 0.05);
+      accept(v);
+    } catch (e) { showToast((e as Error).message); }
+  }
+
   // ── Fatal / loading ──
   if (fatal) return (
     <Centered>
@@ -360,6 +424,9 @@ export function GameClient({ code }: { code: string }) {
   const roundCountdown = tv ? Math.max(0, Math.ceil((tv.nextRoundIn - (now - recvAt)) / 1000)) : 0;
   const peekKey = peekStorageKey(view);
   const dismissedSeq = dismissedPeek[peekKey] ?? readPeekDismissal(peekKey);
+  const roomIdx = tv ? tv.myIdx : me;
+  const chat = view.chat ?? [];
+  const unread = chat.filter((m) => m.id > seenChatId && m.from !== roomIdx).length;
 
   // ── Waiting room ──
   if (view.status === "waiting") {
@@ -393,23 +460,49 @@ export function GameClient({ code }: { code: string }) {
             )}
             <div className="mt-6 max-h-[40vh] w-full max-w-md space-y-2 overflow-y-auto pr-1 scrollbar-thin">
               {view.players.map((p, i) => (
-                <div key={i} className={`flex items-center gap-3 rounded-xl border p-3 ${
-                  i === me ? "border-accent bg-accent-soft" : "border-line bg-panel"
-                }`}>
-                  <span className="text-2xl">{p.avatar}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold text-ink">{p.name}{i === me ? " (ты)" : ""}</p>
-                    <p className="text-xs text-muted">{i === 0 ? "создатель" : "участник"}</p>
+                i === me ? (
+                  <button key={i} onClick={() => { audio.play("select"); setStickersOpen((o) => !o); }} title="Нажми, чтобы отправить стикер"
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-accent bg-accent-soft p-3 text-left transition hover:brightness-110">
+                    <span className="text-2xl">{p.avatar}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-ink">{p.name} (ты)</p>
+                      <p className="text-xs text-muted">{i === 0 ? "создатель" : "участник"} · нажми — будут стикеры 😀</p>
+                    </div>
+                    {i === 0 && <span className="rounded-lg bg-highlight px-2 py-1 text-xs font-bold text-highlight-ink">Хост</span>}
+                  </button>
+                ) : (
+                  <div key={i} className="flex items-center gap-3 rounded-xl border border-line bg-panel p-3">
+                    <span className="text-2xl">{p.avatar}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-ink">{p.name}</p>
+                      <p className="text-xs text-muted">{i === 0 ? "создатель" : "участник"}</p>
+                    </div>
+                    {i === 0 && <span className="rounded-lg bg-highlight px-2 py-1 text-xs font-bold text-highlight-ink">Хост</span>}
                   </div>
-                  {i === 0 && <span className="rounded-lg bg-highlight px-2 py-1 text-xs font-bold text-highlight-ink">Хост</span>}
-                </div>
+                )
               ))}
             </div>
+            {stickersOpen && (
+              <div className="mt-2 flex w-full max-w-md justify-center">
+                <StickerGrid onPick={(id) => void sendSticker(id)} onClose={() => setStickersOpen(false)} />
+              </div>
+            )}
             {view.isHost ? (
-              <button onClick={startGame} disabled={view.players.length < 2 || busy}
-                className="mt-6 font-display text-2xl rounded-2xl bg-accent px-8 py-3 text-white shadow-lg hover:brightness-110 disabled:opacity-40">
-                {view.players.length < 2 ? (view.mode === "tournament" ? `Ждём игроков (${view.players.length}, нужно минимум 2)` : `Ждём игрока (${view.players.length}/${view.maxPlayers})`) : view.mode === "tournament" ? `Начать турнир (${view.players.length} игр.)` : "Начать игру!"}
-              </button>
+              view.players.length >= view.maxPlayers && view.mode !== "tournament" ? (
+                <div className="mt-6 animate-pop rounded-2xl border-2 border-highlight bg-highlight/10 p-4">
+                  <p className="font-display text-xl text-heading">🎉 Комната заполнена ({view.players.length}/{view.maxPlayers})!</p>
+                  <p className="mt-1 text-sm text-muted">Все на месте. Начинай игру, когда будешь готов(а).</p>
+                  <button onClick={startGame} disabled={busy}
+                    className="mt-3 w-full animate-pulse rounded-2xl bg-accent px-8 py-3 font-display text-2xl text-white shadow-lg hover:brightness-110 disabled:opacity-40">
+                    🚀 Начать игру!
+                  </button>
+                </div>
+              ) : (
+                <button onClick={startGame} disabled={view.players.length < 2 || busy}
+                  className="mt-6 font-display text-2xl rounded-2xl bg-accent px-8 py-3 text-white shadow-lg hover:brightness-110 disabled:opacity-40">
+                  {view.players.length < 2 ? (view.mode === "tournament" ? `Ждём игроков (${view.players.length}, нужно минимум 2)` : `Ждём игрока (${view.players.length}/${view.maxPlayers})`) : view.mode === "tournament" ? `Начать турнир (${view.players.length} игр.)` : "Начать игру!"}
+                </button>
+              )
             ) : (
               <p className="mt-6 text-muted">Ждём, пока хост начнёт игру…</p>
             )}
@@ -422,6 +515,10 @@ export function GameClient({ code }: { code: string }) {
                   {copied ? "✓" : "Копировать"}
                 </button>
               </div>
+            </div>
+            <div className="mt-4 flex max-h-[38vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-line bg-panel-strong">
+              <div className="border-b border-line px-4 py-2 text-left font-display text-lg">Чат</div>
+              <ChatPanel messages={chat} myIdx={roomIdx} onSendText={sendChatText} onSendSticker={sendSticker} compact />
             </div>
           </>
         ) : (
@@ -444,6 +541,7 @@ export function GameClient({ code }: { code: string }) {
           </>
         )}
         <Link href="/" className="mt-8 block text-muted underline">На главную</Link>
+        <StickerStack msgs={stickerPops} />
         {toast && <Toast text={toast} />}
       </Centered>
     );
@@ -523,13 +621,16 @@ export function GameClient({ code }: { code: string }) {
   }
   else if (view.phase === "nope" && view.pending) {
     const cancelled = view.pending.nopes % 2 === 1;
+    const targetName = view.pending.target !== undefined ? view.players[view.pending.target]?.name : null;
     status = iRespond
       ? cancelled
         ? "Твою карту отменили «Неть»! Ответишь своим «Неть»?"
-        : "Можно ответить «Неть» или пропустить"
+        : "Ход сделан на тебя — оспоришь «Неть» или пропустишь?"
       : cancelled
         ? `Ждём ответа игрока, чей ход: ${view.players[view.pending.by].name}…`
-        : `Ждём ответа: ${view.pending.responders.map((i) => view.players[i].name).join(", ")}…`;
+        : targetName
+          ? `Ждём ответа ${targetName} — ход сделан на него…`
+          : `Ждём ответа: ${view.pending.responders.map((i) => view.players[i].name).join(", ")}…`;
   } else if (view.phase === "favor" && view.favor) {
     status = view.favor.giver === me ? "Выбери карту, которую отдашь" : `${view.players[view.favor.giver].name} выбирает карту…`;
   } else if (view.phase === "defuse" && view.defuse) {
@@ -593,7 +694,8 @@ export function GameClient({ code }: { code: string }) {
           </section>
 
           {/* Table */}
-          <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-3 py-5 sm:px-4">
+          <section className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-3 py-5 sm:px-4">
+            <StickerStack msgs={stickerPops} />
             <div className="min-h-8 max-w-full break-words px-1 text-center font-display text-lg leading-tight text-heading sm:text-2xl">{status}</div>
 
             <div className="flex max-w-full items-end justify-center gap-4 sm:gap-10">
@@ -682,13 +784,36 @@ export function GameClient({ code }: { code: string }) {
                   <p className="mt-1 text-sm text-muted">Карты игроков скрыты. Выбери другой стол сверху или вернись к своему.</p>
                 </>
               )}
+              {tv && (
+                <div className="relative mx-auto mt-3 w-fit max-w-full">
+                  <button onClick={() => { audio.play("select"); setStickersOpen((o) => !o); }} title="Нажми на своё имя — откроются стикеры"
+                    className="flex max-w-full cursor-pointer items-center gap-2 rounded-full bg-panel px-4 py-1.5 transition hover:brightness-110">
+                    <span className="min-w-0 truncate font-display text-base">{tv.avatars[tv.myIdx]} {tv.names[tv.myIdx]} (ты)</span>
+                    <span aria-hidden="true" className="shrink-0 text-sm opacity-70">😀</span>
+                  </button>
+                  {stickersOpen && (
+                    <div className="absolute bottom-full left-1/2 z-30 mb-2 -translate-x-1/2">
+                      <StickerGrid onPick={(id) => void sendSticker(id)} onClose={() => setStickersOpen(false)} />
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           ) : (
           <section className="w-full min-w-0 border-t border-line bg-panel-strong px-2 pb-4 pt-3 sm:px-4">
             <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
-              <div className={`flex max-w-full min-w-0 items-center gap-2 rounded-full px-3 py-1 sm:px-4 ${myTurn ? "bg-highlight text-highlight-ink" : "bg-panel"}`}>
-                <span className="font-display min-w-0 max-w-[55vw] truncate text-lg sm:max-w-none">{meP?.avatar} {meP?.name}</span>
-                <span className="shrink-0 text-sm opacity-80">· карт: {hand.length}</span>
+              <div className="relative min-w-0 max-w-full">
+                <button onClick={() => { audio.play("select"); setStickersOpen((o) => !o); }} title="Нажми на своё имя — откроются стикеры"
+                  className={`flex max-w-full min-w-0 cursor-pointer items-center gap-2 rounded-full px-3 py-1 transition hover:brightness-110 sm:px-4 ${myTurn ? "bg-highlight text-highlight-ink" : "bg-panel"}`}>
+                  <span className="font-display min-w-0 max-w-[55vw] truncate text-lg sm:max-w-none">{meP?.avatar} {meP?.name}</span>
+                  <span className="shrink-0 text-sm opacity-80">· карт: {hand.length}</span>
+                  <span aria-hidden="true" className="shrink-0 text-sm opacity-70">😀</span>
+                </button>
+                {stickersOpen && (
+                  <div className="absolute bottom-full left-0 z-30 mb-2">
+                    <StickerGrid onPick={(id) => void sendSticker(id)} onClose={() => setStickersOpen(false)} />
+                  </div>
+                )}
               </div>
               <div className="flex w-full min-w-0 gap-2 sm:ml-auto sm:w-auto">
                 <button onClick={onPlay} disabled={!playOk || busy}
@@ -718,17 +843,39 @@ export function GameClient({ code }: { code: string }) {
               <StandingsTable v={view} compact />
             </div>
           )}
-          <div className="border-b border-line px-4 py-2 font-display text-lg">Журнал</div>
-          <div className="flex flex-1 flex-col-reverse space-y-1.5 overflow-y-auto px-4 py-2 text-sm scrollbar-thin">
-            {[...view.log].reverse().map((l) => (
-              <div key={l.id} className={`rounded-md px-2 py-1 ${
-                l.for !== undefined ? "border-l-2 border-highlight bg-highlight/15" : ""
-              } ${l.tone === "danger" ? "text-danger" : l.tone === "good" ? "text-good" : l.tone === "nope" ? "text-nope" : "text-ink"}`}>
-                {l.for !== undefined && <span className="mr-1 text-[10px] uppercase text-heading">лично</span>}
-                {l.text}
-              </div>
-            ))}
+          <div className="flex shrink-0 items-center gap-1 border-b border-line px-2 py-1.5">
+            <button
+              onClick={() => setSideTab("log")}
+              className={`rounded-lg px-3 py-1 font-display text-lg transition ${sideTab === "log" ? "bg-highlight text-highlight-ink" : "text-muted hover:bg-ink/10"}`}
+            >
+              Журнал
+            </button>
+            <button
+              onClick={() => setSideTab("chat")}
+              className={`relative rounded-lg px-3 py-1 font-display text-lg transition ${sideTab === "chat" ? "bg-highlight text-highlight-ink" : "text-muted hover:bg-ink/10"}`}
+            >
+              Чат
+              {unread > 0 && (
+                <span className="ml-1.5 inline-block min-w-5 rounded-full bg-nope px-1.5 py-0.5 align-middle text-xs font-bold leading-none text-white">
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
+            </button>
           </div>
+          {sideTab === "log" ? (
+            <div className="flex flex-1 flex-col-reverse space-y-1.5 overflow-y-auto px-4 py-2 text-sm scrollbar-thin">
+              {[...view.log].reverse().map((l) => (
+                <div key={l.id} className={`rounded-md px-2 py-1 ${
+                  l.for !== undefined ? "border-l-2 border-highlight bg-highlight/15" : ""
+                } ${l.tone === "danger" ? "text-danger" : l.tone === "good" ? "text-good" : l.tone === "nope" ? "text-nope" : "text-ink"}`}>
+                  {l.for !== undefined && <span className="mr-1 text-[10px] uppercase text-heading">лично</span>}
+                  {l.text}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <ChatPanel messages={chat} myIdx={roomIdx} onSendText={sendChatText} onSendSticker={sendSticker} />
+          )}
         </aside>
       </div>
 
@@ -925,7 +1072,7 @@ export function GameClient({ code }: { code: string }) {
 }
 
 function Centered({ children }: { children: ReactNode }) {
-  return <div className="game-surface flex min-h-screen min-w-0 flex-col items-center justify-center overflow-x-clip px-4 py-6 text-center">{children}</div>;
+  return <div className="game-surface relative flex min-h-screen min-w-0 flex-col items-center justify-center overflow-x-clip px-4 py-6 text-center">{children}</div>;
 }
 
 function Toast({ text }: { text: string }) {

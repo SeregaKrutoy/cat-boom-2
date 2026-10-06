@@ -65,6 +65,7 @@ function plainView(s: GameState, token: string, now: number): GameView {
     defuse: s.defuse ? { player: s.defuse.player } : null,
     peek: s.peek && s.peek.player === me ? s.peek : null,
     log: s.log.filter((l) => l.for === undefined || l.for === me).slice(-50),
+    chat: (s.chat ?? []).slice(-50),
     winner: s.winner,
     event: s.event,
     rematch: rematchInfo(s, me),
@@ -130,6 +131,9 @@ function tournamentView(s: GameState, token: string, now: number, watch: number 
     score: [],
     tournament: tv,
     rematch: t.phase === "finished" ? rematchInfo(s, ri) : null,
+    chat: (s.chat ?? [])
+      .filter((m) => !m.tableId || m.tableId === shown.id)
+      .slice(-50),
     spectator: !seated,
     tableId: shown.id,
   };

@@ -4,7 +4,25 @@
 export type Track = "menu" | "game";
 export type SfxName =
   | "click" | "select" | "join" | "draw" | "card" | "nope" | "explode" | "defused"
-  | "attack" | "shuffle" | "steal" | "start" | "win" | "lose" | "turn" | "error" | "peek";
+  | "attack" | "shuffle" | "steal" | "start" | "win" | "lose" | "turn" | "error" | "peek"
+  | "chat" | "sticker"
+  // thematic sounds for quick stickers (one per sticker, see STICKER_SFX)
+  | "st-hi" | "st-gl" | "st-boom" | "st-scream" | "st-laugh" | "st-cry" | "st-growl"
+  | "st-cool" | "st-love" | "st-think" | "st-clap" | "st-bomb" | "st-sleepy" | "st-67"
+  | "st-sing" | "st-happy" | "st-wink" | "st-hooray" | "st-like" | "st-tease"
+  | "st-kiss" | "st-awkward" | "st-meh" | "st-eyeroll" | "st-confused" | "st-sly"
+  | "st-determined" | "st-evil" | "st-facepalm";
+
+/** A thematic sound for each quick sticker (id -> SfxName). Falls back to the generic sticker pop. */
+export const STICKER_SFX: Readonly<Record<string, SfxName>> = {
+  hi: "st-hi", gl: "st-gl", boom: "st-boom", scared: "st-scream", laugh: "st-laugh",
+  cry: "st-cry", angry: "st-growl", cool: "st-cool", love: "st-love", think: "st-think",
+  clap: "st-clap", bomb: "st-bomb", sleepy: "st-sleepy", sixseven: "st-67", sing: "st-sing",
+  happy: "st-happy", wink: "st-wink", hooray: "st-hooray", like: "st-like", tease: "st-tease",
+  kiss: "st-kiss", awkward: "st-awkward", meh: "st-meh", eyeroll: "st-eyeroll",
+  confused: "st-confused", sly: "st-sly", determined: "st-determined", evil: "st-evil",
+  facepalm: "st-facepalm",
+};
 
 export interface AudioSettings {
   master: number; // 0..1
@@ -232,6 +250,161 @@ const SFX: Record<SfxName, (d: AudioNode, t: number) => void> = {
     sweep(d, t, "sine", 600, 1300, 0.3, 0.12);
     tone(d, t + 0.25, 88, 0.3, "sine", 0.12);
   },
+  chat: (d, t) => {
+    tone(d, t, 88, 0.09, "sine", 0.16);
+    tone(d, t + 0.08, 93, 0.14, "sine", 0.16);
+  },
+  sticker: (d, t) => {
+    sweep(d, t, "triangle", 700, 1500, 0.12, 0.16);
+    tone(d, t + 0.1, 91, 0.16, "triangle", 0.18);
+  },
+
+  // ── thematic sticker sounds ──
+  // Привет! (👋) — two friendly waves
+  "st-hi": (d, t) => {
+    tone(d, t, 76, 0.1, "sine", 0.2);
+    tone(d, t + 0.1, 81, 0.18, "sine", 0.2);
+  },
+  // Удачи! (🍀) — soft sparkly chime
+  "st-gl": (d, t) => {
+    tone(d, t, 88, 0.12, "sine", 0.15);
+    tone(d, t + 0.07, 91, 0.2, "sine", 0.13);
+    noise(d, t + 0.02, 0.2, 0.04, "highpass", 8000);
+  },
+  // Бабах! (💥) — explosion rumble
+  "st-boom": (d, t) => {
+    noise(d, t, 0.8, 0.5, "lowpass", 2800, 80);
+    sweep(d, t, "sine", 140, 30, 0.6, 0.5);
+  },
+  // А-а-а! (🙀) — scream-like rising saw
+  "st-scream": (d, t) => {
+    sweep(d, t, "sawtooth", 220, 900, 0.35, 0.18);
+    sweep(d, t + 0.02, "square", 300, 700, 0.3, 0.08);
+  },
+  // Ха-ха! (😹) — staccato laugh rhythm
+  "st-laugh": (d, t) => {
+    [74, 71, 74, 78, 74, 71].forEach((m, i) => tone(d, t + i * 0.08, m, 0.07, "triangle", 0.16));
+  },
+  // Не-е-ет! (😿) — descending sad tones
+  "st-cry": (d, t) => {
+    [64, 62, 59].forEach((m, i) => tone(d, t + i * 0.18, m, 0.32, "sawtooth", 0.12, { lp: 800 }));
+  },
+  // Р-р-р! (😾) — growl: low noise + saw
+  "st-growl": (d, t) => {
+    noise(d, t, 0.45, 0.25, "lowpass", 500, 250);
+    sweep(d, t, "sawtooth", 120, 80, 0.4, 0.14);
+  },
+  // Легко! (😎) — confident twang
+  "st-cool": (d, t) => {
+    tone(d, t, 84, 0.08, "square", 0.12, { lp: 2200 });
+    sweep(d, t + 0.08, "triangle", 900, 600, 0.2, 0.16);
+  },
+  // Милота! (😻) — heart flutter: two soft heartbeats
+  "st-love": (d, t) => {
+    [60, 64, 67].forEach((m, i) => tone(d, t + i * 0.1, m, 0.28, "sine", 0.16));
+  },
+  // Хм-м… (🤔) — contemplative soft ping
+  "st-think": (d, t) => {
+    tone(d, t, 76, 0.22, "sine", 0.12);
+    sweep(d, t + 0.2, "sine", 600, 300, 0.25, 0.06);
+  },
+  // Браво! (👏) — applause: noise bursts
+  "st-clap": (d, t) => {
+    for (let i = 0; i < 5; i++) noise(d, t + i * 0.06, 0.05, 0.22, "bandpass", 2000 + rnd(2000), 1000, 1.2);
+  },
+  // Держите меня! (💣) — fuse sizzle + boom
+  "st-bomb": (d, t) => {
+    noise(d, t, 0.35, 0.15, "highpass", 5000);
+    noise(d, t + 0.4, 0.7, 0.45, "lowpass", 2600, 80);
+    sweep(d, t + 0.4, "sine", 130, 28, 0.5, 0.45);
+  },
+  // Скукота… (😴) — snore: low sine wobble
+  "st-sleepy": (d, t) => {
+    sweep(d, t, "sine", 180, 120, 0.6, 0.14);
+    tone(d, t + 0.3, 60, 0.4, "sine", 0.08, { attack: 0.15 });
+  },
+  // Six-seven! (6️⃣7️⃣) — two punchy hip-hop beats + scratch
+  "st-67": (d, t) => {
+    tone(d, t, 48, 0.09, "square", 0.2);
+    noise(d, t, 0.07, 0.2, "bandpass", 900, 400);
+    tone(d, t + 0.18, 52, 0.09, "square", 0.2);
+    noise(d, t + 0.18, 0.07, 0.2, "bandpass", 700, 1600);
+    noise(d, t + 0.36, 0.1, 0.12, "bandpass", 2600, 700, 2);
+  },
+  // Ля-ля-ля~ (🎶) — simple melody
+  "st-sing": (d, t) => {
+    [72, 74, 76, 74].forEach((m, i) => tone(d, t + i * 0.14, m, 0.16, "triangle", 0.16));
+  },
+  // Ня! (😸) — happy chirp
+  "st-happy": (d, t) => {
+    tone(d, t, 81, 0.07, "sine", 0.16);
+    tone(d, t + 0.08, 86, 0.07, "sine", 0.16);
+    tone(d, t + 0.16, 88, 0.22, "sine", 0.18);
+  },
+  // Подмигну~ (😉) — playful boing
+  "st-wink": (d, t) => {
+    sweep(d, t, "sine", 300, 900, 0.18, 0.14);
+    tone(d, t + 0.18, 84, 0.16, "triangle", 0.14);
+  },
+  // Ура! (🙌) — fanfare
+  "st-hooray": (d, t) => {
+    [72, 76, 79, 84].forEach((m, i) => tone(d, t + i * 0.08, m, 0.18, "square", 0.12, { lp: 2800 }));
+    tone(d, t + 0.36, 84, 0.5, "square", 0.14, { lp: 2600 });
+  },
+  // Класс! (👍) — positive bell
+  "st-like": (d, t) => {
+    tone(d, t, 84, 0.1, "sine", 0.16);
+    tone(d, t + 0.09, 88, 0.24, "sine", 0.16);
+  },
+  // Бе-бе-бе! (😜) — playful oscillation
+  "st-tease": (d, t) => {
+    [72, 76, 72, 76, 72].forEach((m, i) => tone(d, t + i * 0.08, m, 0.07, "square", 0.12, { lp: 2400 }));
+  },
+  // Чмок! (😽) — kiss pop
+  "st-kiss": (d, t) => {
+    sweep(d, t, "sine", 500, 1400, 0.07, 0.14);
+    tone(d, t + 0.08, 88, 0.14, "sine", 0.16);
+  },
+  // Ой-ой… (😅) — awkward descending slide
+  "st-awkward": (d, t) => {
+    sweep(d, t, "triangle", 700, 250, 0.5, 0.12);
+    noise(d, t + 0.15, 0.2, 0.06, "highpass", 4000);
+  },
+  // Мне всё равно (😐) — flat single tone
+  "st-meh": (d, t) => {
+    tone(d, t, 60, 0.5, "square", 0.1);
+  },
+  // Ну-ну… (🙄) — derisive descending whine
+  "st-eyeroll": (d, t) => {
+    sweep(d, t, "sawtooth", 500, 180, 0.45, 0.12, );
+    noise(d, t + 0.15, 0.15, 0.05, "bandpass", 1500, 600);
+  },
+  // Чего?! (😵‍💫) — wobbly confused buzz
+  "st-confused": (d, t) => {
+    sweep(d, t, "square", 300, 500, 0.15, 0.1);
+    sweep(d, t + 0.18, "square", 400, 250, 0.15, 0.1);
+    tone(d, t + 0.4, 72, 0.15, "triangle", 0.08);
+  },
+  // Хе-хе… (😼) — sneaky low chuckle
+  "st-sly": (d, t) => {
+    tone(d, t, 62, 0.09, "triangle", 0.14);
+    tone(d, t + 0.12, 59, 0.2, "triangle", 0.14);
+  },
+  // Ну держись! (😤) — drum beat + rising
+  "st-determined": (d, t) => {
+    tone(d, t, 45, 0.1, "square", 0.2);
+    noise(d, t, 0.09, 0.2, "bandpass", 700, 300);
+    sweep(d, t + 0.12, "sawtooth", 200, 600, 0.25, 0.14);
+  },
+  // Муа-ха-ха! (😈) — evil laugh: low descending tones
+  "st-evil": (d, t) => {
+    [57, 53, 48, 43].forEach((m, i) => tone(d, t + i * 0.13, m, 0.2, "sawtooth", 0.13, { lp: 1200 }));
+  },
+  // Фейспалм (🤦) — slap: sharp noise hit + thud
+  "st-facepalm": (d, t) => {
+    noise(d, t, 0.06, 0.4, "bandpass", 3500, 1200);
+    sweep(d, t + 0.04, "sine", 200, 60, 0.25, 0.3);
+  },
 };
 
 function play(name: SfxName, delay = 0) {
@@ -370,6 +543,10 @@ export const audio = {
     return false;
   },
   play,
+  /** Plays the thematic sound for a specific sticker; falls back to the generic sticker pop. */
+  playSticker(stickerId: string, delay = 0) {
+    play(STICKER_SFX[stickerId] ?? "sticker", delay);
+  },
   getSettings(): AudioSettings {
     load();
     return settings;

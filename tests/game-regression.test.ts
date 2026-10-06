@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { ALL_TYPES } from "../src/lib/game/cards";
 import { botStep } from "../src/lib/game/bot";
-import { addPlayer, applyAction, createState, reactionPlayers, tick } from "../src/lib/game/engine";
+import { addPlayer, applyAction, createState, hostStart, reactionPlayers, tick } from "../src/lib/game/engine";
 import { assertDeckIntegrity, assertRoomIntegrity, DECK_VERSION, getDeckCounts, physicalCards } from "../src/lib/game/deck";
 import { prepareSavedRoom } from "../src/lib/game/compat";
 import { peekStorageKey, shouldShowPeek } from "../src/lib/game/presentation";
@@ -59,8 +59,34 @@ test("Deck never has more than one kitten for any supported player count", () =>
   assert.throws(() => getDeckCounts(7));
 });
 
+test("Full rooms never auto-start: the host presses start even when the room is full", () => {
+  const s = createState("FULLRM", "friends", { id: "host-full", name: "Хост" }, 3);
+  addPlayer(s, "p1-full", "Игрок 1", TEST_NOW);
+  assert.equal(s.status, "waiting");
+  addPlayer(s, "p2-full", "Игрок 2", TEST_NOW);
+  assert.equal(s.status, "waiting", "a full room must wait for the host button, not start by itself");
+  assert(s.log.some((l) => l.text.includes("Комната заполнена")));
+  assert.throws(() => addPlayer(s, "p3-full", "Лишний", TEST_NOW), /заполнена/);
+  hostStart(s, "host-full", TEST_NOW);
+  assert.equal(s.status, "playing");
+  assert.throws(() => addPlayer(s, "p4-full", "Поздний", TEST_NOW), /уже началась/);
+});
+
+test("3–6 players scale per the requested table: +1 attack/shuffle, +1 skip/favor/future/nope past the +2 base, +2 each cat", () => {
+  const expected: Record<number, Record<string, number>> = {
+    3: { attack: 3, shuffle: 3, skip: 5, favor: 5, future: 5, nope: 5, cat1: 6, cat2: 6, cat3: 6, defuse: 4, kitten: 1 },
+    4: { attack: 4, shuffle: 4, skip: 6, favor: 6, future: 6, nope: 6, cat1: 8, cat2: 8, cat3: 8, defuse: 5, kitten: 1 },
+    5: { attack: 5, shuffle: 5, skip: 7, favor: 7, future: 7, nope: 7, cat1: 10, cat2: 10, cat3: 10, defuse: 6, kitten: 1 },
+    6: { attack: 6, shuffle: 6, skip: 8, favor: 8, future: 8, nope: 8, cat1: 12, cat2: 12, cat3: 12, defuse: 7, kitten: 1 },
+  };
+  for (const n of [3, 4, 5, 6]) {
+    const got = getDeckCounts(n);
+    for (const [type, count] of Object.entries(expected[n])) assert.equal(got[type as keyof typeof got], count, `${type} for ${n} players`);
+  }
+});
+
 test("5 and 6 players receive 8 cards each and keep a useful deck", () => {
-  for (const [n, total, deckSize] of [[5, 54, 14], [6, 64, 16]] as const) {
+  for (const [n, total, deckSize] of [[5, 75, 35], [6, 88, 40]] as const) {
     const s = makeGame(n);
     assert.equal(physicalCards(s).length, total);
     assert.equal(s.deck.length, deckSize);
@@ -198,25 +224,26 @@ test("Nope cancels Future; Nope of Nope restores it without restoring spent card
   assert.equal(s.current, 0);
 });
 
-test("Nope chain, 3 players: only the player whose turn it is may answer a Nope", () => {
+test("Nope chain, 3 players: only the targeted player may contest, then only the owner answers", () => {
   const s = makeGame(3);
-  arrange(s, [["skip", "nope", "nope"], ["nope", "defuse"], ["nope", "defuse"]]);
+  arrange(s, [["skip", "nope", "nope"], ["nope", "nope", "defuse"], ["nope", "defuse"]]);
   play(s, 0, "skip");
-  // The card is in force: every other living player may Nope it.
-  assert.deepEqual(reactionPlayers(s), [1, 2]);
+  // Skip targets the next player: only player 1 may contest, player 2 is a bystander.
+  assert.deepEqual(reactionPlayers(s), [1]);
+  assert.throws(() => applyAction(s, 2, { type: "nope" }, TEST_NOW), /только .* — ход сделан на него/);
+  assert.throws(() => applyAction(s, 2, { type: "pass" }, TEST_NOW));
   act(s, 1, { type: "nope" });
-  // Cancelled: ONLY the player who played the card may answer — player 2 has a Nope but cannot use it.
+  // Cancelled: ONLY the player who played the card may answer.
   assert.deepEqual(reactionPlayers(s), [0]);
   assert.throws(() => applyAction(s, 2, { type: "nope" }, TEST_NOW), /чей сейчас ход/);
-  assert.throws(() => applyAction(s, 2, { type: "pass" }, TEST_NOW));
   assert.equal(s.pending!.nopes, 1);
-  // The original player answers with their own Nope — the card is back in force.
+  // The original player answers with their own Nope — the card is back in force, target may answer again.
   act(s, 0, { type: "nope" });
   assert.equal(s.pending!.nopes, 2);
-  assert.deepEqual(reactionPlayers(s), [1, 2], "after the counter-Nope any other player may answer again");
-  act(s, 2, { type: "nope" });
+  assert.deepEqual(reactionPlayers(s), [1], "after the counter-Nope only the target may answer again");
+  assert.throws(() => applyAction(s, 2, { type: "nope" }, TEST_NOW), /только .* — ход сделан на него/);
+  act(s, 1, { type: "nope" });
   assert.deepEqual(reactionPlayers(s), [0]);
-  assert.throws(() => applyAction(s, 1, { type: "nope" }, TEST_NOW));
   // The owner passes: the third Nope stands and the card is cancelled.
   act(s, 0, { type: "pass" });
   assert.equal(s.pending, null);
@@ -224,16 +251,28 @@ test("Nope chain, 3 players: only the player whose turn it is may answer a Nope"
   assert.equal(s.discard.filter((c) => c.type === "nope").length, 3);
 });
 
-test("Nope chain, 4 players: passing by bystanders never lets them answer a Nope", () => {
+test("Nope chain, favor on a chosen target: only that target may contest", () => {
   const s = makeGame(4);
-  arrange(s, [["attack", "nope"], ["defuse"], ["defuse"], ["nope"]]);
+  arrange(s, [["favor", "nope"], ["nope", "defuse"], ["defuse"], ["defuse"]]);
+  play(s, 0, "favor", 1, { target: 2 });
+  assert.deepEqual(reactionPlayers(s), [2], "player 1 has a Nope but the move targets player 2");
+  assert.throws(() => applyAction(s, 1, { type: "nope" }, TEST_NOW), /только/);
+  assert.throws(() => applyAction(s, 3, { type: "pass" }, TEST_NOW));
+  resolve(s);
+  assert.deepEqual(s.favor, { giver: 2, receiver: 0 });
+});
+
+test("Nope chain, 4 players: attack targets the next player, chain stays between the two", () => {
+  const s = makeGame(4);
+  arrange(s, [["attack", "nope"], ["nope", "defuse"], ["nope", "defuse"], ["nope", "defuse"]]);
   play(s, 0, "attack");
-  assert.deepEqual(reactionPlayers(s), [1, 2, 3]);
-  act(s, 1, { type: "pass" });
-  assert.equal(s.phase, "nope");
-  act(s, 3, { type: "nope" });
+  assert.deepEqual(reactionPlayers(s), [1]);
+  assert.throws(() => applyAction(s, 3, { type: "nope" }, TEST_NOW), /только/);
+  act(s, 1, { type: "nope" });
   assert.deepEqual(reactionPlayers(s), [0]);
-  act(s, 0, { type: "nope" }); resolve(s);
+  act(s, 0, { type: "nope" });
+  assert.deepEqual(reactionPlayers(s), [1]);
+  resolve(s);
   assert.equal(s.current, 1);
   assert.equal(s.turnsLeft, 2);
 });
@@ -261,14 +300,20 @@ test("Nope chain, duel: the rule is unchanged (only the other player answers)", 
   assert(s.peek, "an even number of Nopes leaves the card in force");
 });
 
-test("Nope timeout resolves an effect once, and pass does not erase other players' opportunity", () => {
+test("Nope timeout resolves an effect once; the target's pass resolves immediately", () => {
   const s = makeGame(3);
   arrange(s, [["skip"], ["nope"], ["nope"]]);
   play(s, 0, "skip");
-  const deadline = s.pending!.deadline;
   act(s, 1, { type: "pass" });
-  assert(s.pending && s.current === 0);
+  assert.equal(s.pending, null, "the only responder passed, so the effect resolves at once");
+  assert.equal(s.current, 1);
+  assertDeckIntegrity(s);
+
+  arrange(s, [["skip"], ["nope"], ["nope"]]);
+  play(s, 0, "skip");
+  const deadline = s.pending!.deadline;
   tick(s, deadline + 1, botStep);
+  assert.equal(s.pending, null);
   assert.equal(s.current, 1);
   tick(s, deadline + 100, botStep);
   assert.equal(s.current, 1);
@@ -757,4 +802,104 @@ test("Saved games from before smileys still render (default smiley)", () => {
   act(s, 0, { type: "rematch" });
   act(s, 1, { type: "rematch" });
   assert.equal(s.status, "playing");
+});
+
+// ───────────── tournament table-scoped chat & stickers ─────────────
+
+test("In tournaments, stickers are scoped to the table where sent, and observers can send to watched tables", () => {
+  const { postChat } = require("../src/lib/game/chat");
+  const s = createState("CHATTR", "tournament", { id: "p0", name: "P0", avatar: "😸" });
+  addPlayer(s, "p1", "P1", TEST_NOW, "🐈");
+  addPlayer(s, "p2", "P2", TEST_NOW, "😾");
+  addPlayer(s, "p3", "P3", TEST_NOW, "🦁");
+  addPlayer(s, "p4", "P4", TEST_NOW, "🐯");
+  startRoom(s, s.hostId, TEST_NOW);
+
+  // 5 players = 2 tables + 1 resting player (bye)
+  const t = s.tournament!;
+  assert.equal(t.tables.length, 2);
+  const table1 = t.tables[0];
+  const table2 = t.tables[1];
+  const restingIdx = t.bye!;
+  const restingToken = s.players[restingIdx].id;
+
+  // 1. Seated player at table 1 sends a sticker without specifying watch
+  const p1Token = s.players[table1.a].id;
+  postChat(s, p1Token, { sticker: "boom" }, TEST_NOW);
+  const msg1 = s.chat!.at(-1)!;
+  assert.equal(msg1.tableId, table1.id);
+  assert.equal(msg1.kind, "sticker");
+
+  // 2. Seated player at table 2 sends a sticker
+  const p2Token = s.players[table2.a].id;
+  postChat(s, p2Token, { sticker: "laugh" }, TEST_NOW + 1000);
+  const msg2 = s.chat!.at(-1)!;
+  assert.equal(msg2.tableId, table2.id);
+
+  // 3. Resting observer watching table 2 sends a sticker
+  postChat(s, restingToken, { sticker: "cool" }, TEST_NOW + 2000, table2.id);
+  const msg3 = s.chat!.at(-1)!;
+  assert.equal(msg3.tableId, table2.id, "observer's sticker must be assigned to the watched table");
+  assert.equal(msg3.from, restingIdx);
+
+  // Verify view filtering:
+  // Table 1 players only see Table 1 messages
+  const vTable1 = toView(s, p1Token, TEST_NOW + 2500);
+  assert.equal(vTable1.tableId, table1.id);
+  assert(vTable1.chat.some((m) => m.sticker === "boom"));
+  assert(!vTable1.chat.some((m) => m.sticker === "laugh"), "Table 1 must not see Table 2's sticker");
+  assert(!vTable1.chat.some((m) => m.sticker === "cool"), "Table 1 must not see observer's sticker sent to Table 2");
+
+  // Table 2 players see Table 2 messages (both seated player's and observer's)
+  const vTable2 = toView(s, p2Token, TEST_NOW + 2500);
+  assert.equal(vTable2.tableId, table2.id);
+  assert(!vTable2.chat.some((m) => m.sticker === "boom"), "Table 2 must not see Table 1's sticker");
+  assert(vTable2.chat.some((m) => m.sticker === "laugh"));
+  assert(vTable2.chat.some((m) => m.sticker === "cool"), "Table 2 must see observer's sticker");
+
+  // Observer watching Table 2 sees Table 2's stickers
+  const vObserverWatch2 = toView(s, restingToken, TEST_NOW + 2500, table2.id);
+  assert(vObserverWatch2.chat.some((m) => m.sticker === "cool"));
+  assert(vObserverWatch2.chat.some((m) => m.sticker === "laugh"));
+  assert(!vObserverWatch2.chat.some((m) => m.sticker === "boom"));
+
+  // Observer switches to Table 1 -> sees Table 1's stickers only
+  const vObserverWatch1 = toView(s, restingToken, TEST_NOW + 2500, table1.id);
+  assert(vObserverWatch1.chat.some((m) => m.sticker === "boom"));
+  assert(!vObserverWatch1.chat.some((m) => m.sticker === "cool"));
+  assert(!vObserverWatch1.chat.some((m) => m.sticker === "laugh"));
+});
+
+test("Sticker set: 29 unique stickers, every one is accepted by the server and nothing else is", () => {
+  const { STICKERS, isStickerId } = require("../src/lib/stickers");
+  const { postChat } = require("../src/lib/game/chat");
+  assert.equal(STICKERS.length, 29);
+  assert.equal(new Set(STICKERS.map((s: { id: string }) => s.id)).size, STICKERS.length, "ids are unique");
+  assert.equal(new Set(STICKERS.map((s: { art: string }) => s.art)).size, STICKERS.length, "art is unique");
+  for (const id of ["hi", "laugh", "cool", "love", "scared", "cry", "angry", "think"]) assert(isStickerId(id), `old sticker ${id} kept`);
+  for (const id of ["sleepy", "sixseven", "sing", "happy", "wink", "hooray", "like", "tease", "kiss", "awkward", "meh", "eyeroll", "confused", "sly", "determined", "evil", "facepalm"]) {
+    assert(isStickerId(id), `new sticker ${id}`);
+  }
+  const s = makeGame(2);
+  let now = TEST_NOW;
+  for (const st of STICKERS) {
+    now += 1000;
+    postChat(s, s.players[0].id, { sticker: st.id }, now);
+  }
+  assert.equal(s.chat!.filter((m) => m.kind === "sticker").length, Math.min(29, 50));
+  assert.throws(() => postChat(s, s.players[1].id, { sticker: "unknown" }, now + 5000), /Такого стикера нет/);
+});
+
+test("Every sticker has a thematic sound; unknown stickers fall back to the generic pop", () => {
+  const { STICKER_SFX } = require("../src/lib/audio");
+  const { STICKERS } = require("../src/lib/stickers");
+  assert.equal(Object.keys(STICKER_SFX).length, 29);
+  for (const st of STICKERS) {
+    assert(STICKER_SFX[st.id], `sticker ${st.id} has a sound`);
+  }
+  assert.equal(STICKER_SFX["hi"], "st-hi");
+  assert.equal(STICKER_SFX["facepalm"], "st-facepalm");
+  assert.equal(STICKER_SFX["evil"], "st-evil");
+  assert.equal(STICKER_SFX["sixseven"], "st-67");
+  assert.equal(STICKER_SFX["unknown-id"], undefined);
 });
